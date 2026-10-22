@@ -91,3 +91,42 @@ def whatsapp_do_entregador(order: StoreOrder, texto: str) -> str:
     from apps.core.utils import normalize_phone_number
     numero = normalize_phone_number(getattr(order.entregador, 'telefone', '') or '') if order.entregador_id else ''
     return f'https://wa.me/{numero}?' + urlencode({'text': texto}, quote_via=quote)
+
+
+class NaoEnviado(Exception):
+    """Motivo em português, para o painel mostrar como veio."""
+
+
+def enviar_ao_entregador(order: StoreOrder) -> str:
+    """Manda o texto pelo WhatsApp da loja (API), como mensagem normal.
+
+    Só dentro da janela de 24 h: o entregador precisa ter escrito para o número
+    da loja nesse prazo — fora dela a Meta recusa texto livre (131047), e
+    modelo aprovado o dono não quis (22/10). Devolve o id da mensagem.
+    """
+    from apps.automation.mensageiro import janela
+    from apps.core.utils import normalize_phone_number
+    from apps.whatsapp.models import Message
+    from apps.whatsapp.services.message_service import MessageService
+
+    entregador = order.entregador
+    if entregador is None:
+        raise NaoEnviado('Escolha o entregador do pedido primeiro.')
+    telefone = normalize_phone_number(entregador.telefone or '')
+    if not telefone:
+        raise NaoEnviado(f'{entregador.nome} não tem WhatsApp cadastrado em Equipe e entregas.')
+    conta = getattr(order.store, 'whatsapp_account', None)
+    if conta is None:
+        raise NaoEnviado('A loja não tem WhatsApp conectado.')
+    if not janela.aberta(conta, telefone):
+        raise NaoEnviado(
+            f'{entregador.nome} não mandou mensagem para a loja nas últimas 24 h — '
+            'peça um "oi" dele no WhatsApp da loja e envie de novo.')
+
+    mensagem = MessageService().send_text_message(
+        account_id=str(conta.id), to=telefone, text=texto_para_entregador(order),
+        metadata={'automatico': True, 'evento': 'entregador', 'pedido': str(order.id)},
+    )
+    if mensagem is None or getattr(mensagem, 'status', None) == Message.MessageStatus.FAILED:
+        raise NaoEnviado(getattr(mensagem, 'error_message', '') or 'O WhatsApp recusou o envio.')
+    return str(getattr(mensagem, 'whatsapp_message_id', '') or getattr(mensagem, 'id', ''))

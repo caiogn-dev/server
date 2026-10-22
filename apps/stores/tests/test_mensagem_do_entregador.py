@@ -107,3 +107,57 @@ def test_api_outra_loja_nao_ve(loja):
     api = APIClient()
     api.force_authenticate(user=vizinha.owner)
     assert api.get(f'/api/v1/stores/{loja.slug}/pedidos/{pedido.id}/entregador/').status_code in (403, 404)
+
+
+class TestEnviarPeloWhatsAppDaLoja:
+    """POST …/entregador/enviar/: mensagem normal pela API, só na janela de 24 h."""
+
+    def _url(self, loja, pedido):
+        return f'/api/v1/stores/{loja.slug}/pedidos/{pedido.id}/entregador/enviar/'
+
+    def _api(self, loja):
+        api = APIClient()
+        api.force_authenticate(user=loja.owner)
+        return api
+
+    @pytest.fixture(autouse=True)
+    def _loja_com_whatsapp(self):
+        from unittest.mock import MagicMock, PropertyMock, patch
+
+        from apps.stores.models import Store
+        with patch.object(Store, 'whatsapp_account', new_callable=PropertyMock,
+                          return_value=MagicMock(id='conta-1')):
+            yield
+
+    def test_janela_aberta_manda_o_texto(self, loja):
+        from unittest.mock import MagicMock, patch
+        joao = Entregador.objects.create(store=loja, nome='João', telefone='63 99999-0000')
+        pedido = _pedido(loja, entregador=joao)
+        enviado = MagicMock(status='sent', whatsapp_message_id='wamid.1')
+        with patch('apps.automation.mensageiro.janela.aberta', return_value=True), \
+                patch('apps.whatsapp.services.message_service.MessageService.send_text_message',
+                      return_value=enviado) as envio:
+            r = self._api(loja).post(self._url(loja, pedido))
+        assert r.status_code == 200, r.content
+        kwargs = envio.call_args.kwargs
+        assert kwargs['to'] == '5563999990000'
+        assert 'COBRAR R$ 80,91' in kwargs['text']
+
+    def test_janela_fechada_explica_e_nao_tenta(self, loja):
+        from unittest.mock import patch
+        joao = Entregador.objects.create(store=loja, nome='João', telefone='63 99999-0000')
+        pedido = _pedido(loja, entregador=joao)
+        with patch('apps.automation.mensageiro.janela.aberta', return_value=False), \
+                patch('apps.whatsapp.services.message_service.MessageService.send_text_message') as envio:
+            r = self._api(loja).post(self._url(loja, pedido))
+        assert r.status_code == 409
+        assert '24 h' in r.json()['detail']
+        envio.assert_not_called()
+
+    def test_sem_entregador_ou_sem_telefone(self, loja):
+        pedido = _pedido(loja)
+        assert self._api(loja).post(self._url(loja, pedido)).status_code == 409
+        semfone = Entregador.objects.create(store=loja, nome='Zé', telefone='')
+        pedido2 = _pedido(loja, order_number='CE-2', entregador=semfone)
+        r = self._api(loja).post(self._url(loja, pedido2))
+        assert r.status_code == 409 and 'WhatsApp' in r.json()['detail']

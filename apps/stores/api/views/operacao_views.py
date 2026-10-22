@@ -78,6 +78,20 @@ class EntregadorDoPedidoView(_DaLoja):
                          'entregador_nome': entregador.nome if entregador else None})
 
 
+class EnviarAoEntregadorView(_DaLoja):
+    """POST → manda a mensagem do pedido no WhatsApp do entregador (janela de 24 h)."""
+
+    def post(self, request, store_slug, pk):
+        from apps.stores.services.mensagem_do_entregador import NaoEnviado, enviar_ao_entregador
+        loja = self.loja(request, store_slug)
+        pedido = get_object_or_404(StoreOrder.objects.select_related('entregador', 'store'), pk=pk, store=loja)
+        try:
+            mensagem_id = enviar_ao_entregador(pedido)
+        except NaoEnviado as exc:
+            return Response({'detail': str(exc)}, status=409)
+        return Response({'enviado': True, 'mensagem_id': mensagem_id, 'para': pedido.entregador.nome})
+
+
 class RankingDaOperacaoView(_DaLoja):
     def get(self, request, store_slug):
         loja = self.loja(request, store_slug)

@@ -11,7 +11,7 @@ from rest_framework_nested import routers as nested_routers
 
 from .api.views.recuperacao_views import RecuperacaoDeVendasView
 from .api.views.operacao_views import (
-    EntregadorDoPedidoView, EntregadorView, EntregadoresView, MelhorarDescricaoView,
+    EntregadorDoPedidoView, EntregadorView, EnviarAoEntregadorView, EntregadoresView, MelhorarDescricaoView,
     RankingDaOperacaoView, SugestaoDeCombosView,
 )
 from .api.views.lote_views import StoreLoteViewSet
@@ -288,6 +288,7 @@ store_frontend_patterns = [
     path('entregadores/', EntregadoresView.as_view(), name='store-entregadores'),
     path('entregadores/<uuid:pk>/', EntregadorView.as_view(), name='store-entregador'),
     path('pedidos/<uuid:pk>/entregador/', EntregadorDoPedidoView.as_view(), name='store-pedido-entregador'),
+    path('pedidos/<uuid:pk>/entregador/enviar/', EnviarAoEntregadorView.as_view(), name='store-pedido-entregador-enviar'),
     path('ranking/', RankingDaOperacaoView.as_view(), name='store-ranking'),
     # Layout da comanda montada no servidor (docs/comanda-no-servidor.md §4)
     path('comanda/layout/', ComandaLayoutView.as_view(), name='store-comanda-layout'),
