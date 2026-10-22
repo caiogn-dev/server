@@ -408,6 +408,8 @@ class UnifiedService:
           {cart_total}     — valor total do carrinho (R$ XX.XX)
           {cart_items}     — quantidade de itens no carrinho
           {order_id}       — ID do pedido, SOMENTE se disponível na sessão
+          {website_url}    — link do cardápio (mesmo valor de {menu_url})
+          {menu_url}       — link do cardápio
 
         Variáveis cujo dado está ausente são substituídas pela string vazia
         para evitar mensagens com placeholders visíveis ao cliente.
@@ -417,6 +419,12 @@ class UnifiedService:
 
         order_id = session_data.get('order_id')
         cart_total = float(session_data.get('cart_total') or 0)
+        link = ''
+        if self.company:
+            try:
+                link = _safe(self.company.link_do_cardapio())
+            except Exception:
+                logger.warning('[UnifiedService] link do cardápio indisponível', exc_info=True)
 
         replacements = {
             '{customer_name}': _safe(self.conversation.contact_name, 'Cliente'),
@@ -426,6 +434,9 @@ class UnifiedService:
             '{cart_items}': _safe(session_data.get('cart_items_count'), '0'),
             # {order_id} só aparece se há um pedido real — evita "Pedido: None"
             '{order_id}': _safe(order_id) if order_id else '',
+            # O painel oferece os dois; ficavam crus na mensagem fora de horário.
+            '{website_url}': link,
+            '{menu_url}': link,
         }
 
         content = template.message_text

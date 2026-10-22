@@ -668,8 +668,8 @@ class AutomationService:
             'phone_number': session.phone_number,
             'cart_total': f"{session.cart_total:.2f}",
             'company_name': profile.company_name,
-            'website_url': profile.website_url,
-            'menu_url': profile.menu_url,
+            'website_url': profile.link_do_cardapio(),
+            'menu_url': profile.link_do_cardapio(),
             **(extra_context or {})
         }
 

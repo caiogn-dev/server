@@ -266,6 +266,17 @@ class CompanyProfile(BaseModel):
 
         return self.website_url or ''
 
+    def link_do_cardapio(self):
+        """O link que {website_url}/{menu_url} viram: nunca vazio se há loja."""
+        url = self.get_menu_url()
+        if url:
+            return url
+        store = self.get_effective_store()
+        if not store:
+            return ''
+        from apps.agents.services.contexto_da_loja import link_do_cardapio
+        return link_do_cardapio(store)
+
     def sync_from_store(self, save: bool = True):
         store = self.get_effective_store()
         if not store:

@@ -142,6 +142,24 @@ class RenderTemplateTestCase(TestCase):
         result = self._render('Total: {cart_total}', session_data={'cart_total': 59.9})
         self.assertIn('R$ 59.90', result)
 
+    def test_website_url_e_menu_url_viram_o_link_do_cardapio(self):
+        """Mensagem fora de horário da Cê saía com "{website_url}" cru (22/10)."""
+        svc = _make_unified_service()
+        company = MagicMock()
+        company.company_name = 'Cê Saladas'
+        company.link_do_cardapio.return_value = 'https://cardapidex.com.br/ce-saladas'
+        svc.company = company
+        template = MagicMock()
+        template.message_text = 'Peça agendado: {website_url} ou {menu_url}'
+        template.id = 'tpl-002'
+
+        result = svc._render_template(template, {})
+
+        self.assertEqual(
+            result,
+            'Peça agendado: https://cardapidex.com.br/ce-saladas ou https://cardapidex.com.br/ce-saladas',
+        )
+
     def test_unknown_placeholder_logged(self):
         """Placeholders não reconhecidos ficam no texto (sem crash)."""
         result = self._render('Valor: {valor_especial}')

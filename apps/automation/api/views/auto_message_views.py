@@ -133,8 +133,8 @@ class AutoMessageViewSet(viewsets.ModelViewSet):
             'tracking_code': request.data.get('tracking_code', 'BR123456789'),
             'delivery_estimate': request.data.get('delivery_estimate', '40 minutos'),
             'company_name': auto_message.company.company_name,
-            'website_url': auto_message.company.website_url,
-            'menu_url': auto_message.company.menu_url,
+            'website_url': auto_message.company.link_do_cardapio(),
+            'menu_url': auto_message.company.link_do_cardapio(),
         }
         
         # Render message
