@@ -53,13 +53,34 @@ def ranking_da_operacao(store, dias: int = 30, agora=None) -> dict:
         'sem_entregador': pedidos.filter(
             entregador__isnull=True, delivery_method=StoreOrder.DeliveryMethod.DELIVERY,
         ).count(),
-        'atendentes': [
-            {
-                'id': a['created_by_staff_id'],
-                'nome': a['created_by_staff__first_name'] or a['created_by_staff__username'],
-                'pedidos': a['pedidos'],
-                'faturado': float(a['faturado'] or 0),
-            }
-            for a in atendentes
-        ],
+        'atendentes': _atendentes(store, atendentes),
     }
+
+
+def _nome(user) -> str:
+    return user.first_name or user.username
+
+
+def _atendentes(store, com_pedido) -> list[dict]:
+    """Quem lançou pedido no período + a equipe da loja com zero.
+
+    Sem a equipe, colaborador recém-cadastrado não aparecia ("Nenhum pedido
+    lançado no painel") e o dono achava que o cadastro não tinha valido.
+    """
+    from apps.stores.models import StoreTeamMember
+
+    linhas = {
+        a['created_by_staff_id']: {
+            'id': a['created_by_staff_id'],
+            'nome': a['created_by_staff__first_name'] or a['created_by_staff__username'],
+            'pedidos': a['pedidos'],
+            'faturado': float(a['faturado'] or 0),
+        }
+        for a in com_pedido
+    }
+    equipe = [store.owner] if store.owner_id else []
+    equipe += list(store.staff.all())
+    equipe += [m.user for m in StoreTeamMember.objects.filter(tenant=store, is_active=True).select_related('user')]
+    for user in equipe:
+        linhas.setdefault(user.id, {'id': user.id, 'nome': _nome(user), 'pedidos': 0, 'faturado': 0.0})
+    return sorted(linhas.values(), key=lambda a: (-a['pedidos'], a['nome'].lower()))

@@ -61,9 +61,21 @@ class TestRanking:
         _pedido(loja, created_by_staff=ana)
         _pedido(loja, created_by_staff=ana)
 
-        assert ranking_da_operacao(loja)['atendentes'] == [
-            {'id': ana.id, 'nome': 'Ana', 'pedidos': 2, 'faturado': 100.0},
-        ]
+        assert ranking_da_operacao(loja)['atendentes'][0] == {'id': ana.id, 'nome': 'Ana', 'pedidos': 2, 'faturado': 100.0}
+
+    def test_equipe_aparece_mesmo_sem_pedido(self, loja):
+        """Dono cadastrou o colaborador e o quadro dizia 'nenhum' (22/10): a
+        equipe inteira aparece, com zero até lançar o primeiro pedido."""
+        from apps.stores.models import StoreTeamMember
+        bia = User.objects.create_user(username='bia-equipe', first_name='Bia', password='x')
+        StoreTeamMember.objects.create(tenant=loja, user=bia)
+        saiu = User.objects.create_user(username='saiu-equipe', first_name='Saiu', password='x')
+        StoreTeamMember.objects.create(tenant=loja, user=saiu, is_active=False)
+
+        nomes = {a['nome']: a for a in ranking_da_operacao(loja)['atendentes']}
+        assert nomes['Bia'] == {'id': bia.id, 'nome': 'Bia', 'pedidos': 0, 'faturado': 0.0}
+        assert loja.owner.id in {a['id'] for a in nomes.values()}
+        assert 'Saiu' not in nomes
 
 
 class TestApi:
