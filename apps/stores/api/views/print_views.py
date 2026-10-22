@@ -415,6 +415,9 @@ class PrintAgentHeartbeatView(APIView):
             # O agent avisa no log quando está velho; o painel mostra o selo.
             'versao_atual': vigia_de_impressao.VERSAO_ATUAL_DO_AGENT,
             'versao_desatualizada': vigia_de_impressao.versao_desatualizada(agent.app_version),
+            # Auto-update do agente 0.6.0 (contrato §5): baixa, confere o
+            # sha256 e troca os arquivos. null = nada publicado.
+            'atualizacao': vigia_de_impressao.atualizacao_do_agent(),
         })
 
 

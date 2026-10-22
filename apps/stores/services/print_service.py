@@ -457,7 +457,39 @@ def _notas_da_loja(order: StoreOrder) -> str:
     return notas
 
 
-def build_order_print_payload(order: StoreOrder, *, template: str = StorePrintJob.Template.KITCHEN_TICKET) -> dict:
+# Templates cuja comanda o servidor monta (contrato docs/comanda-no-servidor.md).
+# O recibo do cliente continua montado no agente.
+TEMPLATES_COM_ESCPOS = ('kitchen_ticket', 'prep_ticket')
+
+
+def _com_escpos(payload: dict, store, layout: dict | None) -> dict:
+    """Acrescenta `escpos_b64` (bytes prontos, já com as vias). Agente velho
+    ignora a chave e monta como sempre; por isso uma falha aqui só registra —
+    o resto do payload ainda imprime."""
+    if payload.get('template') not in TEMPLATES_COM_ESCPOS:
+        return payload
+    from apps.stores.services import comanda_linhas
+    from apps.stores.services.comanda_escpos import escpos_b64_da_comanda
+    try:
+        layout = comanda_linhas.validar_layout(layout) if layout is not None else comanda_linhas.layout_da_loja(store)
+        payload['escpos_b64'] = escpos_b64_da_comanda(payload, layout)
+    except Exception as exc:  # noqa: BLE001 — sem escpos_b64 o agente monta sozinho
+        logger.exception('Comanda ESC/POS falhou (loja %s): %s', getattr(store, 'pk', '?'), exc)
+    return payload
+
+
+def build_order_print_payload(
+    order: StoreOrder,
+    *,
+    template: str = StorePrintJob.Template.KITCHEN_TICKET,
+    layout: dict | None = None,
+) -> dict:
+    """`layout`: layout da comanda a usar no lugar do salvo na loja (prévia e
+    "imprimir teste" com layout ainda não salvo)."""
+    return _com_escpos(payload_do_pedido(order, template=template), order.store, layout)
+
+
+def payload_do_pedido(order: StoreOrder, *, template: str) -> dict:
     # Combos ligados a uma linha de item são pulados no loop de combos abaixo
     # (evita duplicar a linha), então os sabores escolhidos precisam entrar
     # nos details do próprio item — senão a comanda sai sem salada/suco.
@@ -597,8 +629,9 @@ def enqueue_order_print_job(
     source: str = StorePrintJob.Source.ORDER_CREATED,
     dedupe: bool = True,
     requested_by: str = '',
+    layout: dict | None = None,
 ) -> PrintJobResult:
-    payload = build_order_print_payload(order, template=template)
+    payload = build_order_print_payload(order, template=template, layout=layout)
     papel = (
         StorePrintAgent.IMPRIME_RECIBO
         if template == StorePrintJob.Template.CUSTOMER_RECEIPT

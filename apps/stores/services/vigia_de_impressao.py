@@ -31,7 +31,22 @@ logger = logging.getLogger(__name__)
 
 # Versão do pastita-print-agent que o painel considera atual. Bumpar junto com
 # o `package.json` do agent: é o que acende "atualize o programa de impressão".
-VERSAO_ATUAL_DO_AGENT = '0.5.0'
+VERSAO_ATUAL_DO_AGENT = '0.6.0'
+
+
+
+def atualizacao_do_agent() -> dict | None:
+    """Pacote que o agente baixa sozinho, vindo do env (PRINT_AGENT_UPDATE_*).
+    Só sai com os três campos: sem sha256 o agente não tem como conferir o zip."""
+    from django.conf import settings
+
+    versao = getattr(settings, 'PRINT_AGENT_UPDATE_VERSION', '') or ''
+    url_zip = getattr(settings, 'PRINT_AGENT_UPDATE_URL', '') or ''
+    sha256 = getattr(settings, 'PRINT_AGENT_UPDATE_SHA256', '') or ''
+    if not (versao and url_zip and sha256):
+        return None
+    return {'versao': versao, 'url_zip': url_zip, 'sha256': sha256.lower()}
+
 
 # Heartbeat é a cada 30 s; 3 minutos = seis batidas perdidas, sem falso alarme
 # por um soluço de rede.
