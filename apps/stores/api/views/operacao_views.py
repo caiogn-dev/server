@@ -58,7 +58,14 @@ class EntregadorView(_DaLoja):
 
 
 class EntregadorDoPedidoView(_DaLoja):
-    """POST {entregador: id | null} — quem levou este pedido."""
+    """GET → mensagem pronta para o entregador; POST {entregador: id | null} — quem levou."""
+
+    def get(self, request, store_slug, pk):
+        from apps.stores.services.mensagem_do_entregador import texto_para_entregador, whatsapp_do_entregador
+        loja = self.loja(request, store_slug)
+        pedido = get_object_or_404(StoreOrder.objects.select_related('entregador'), pk=pk, store=loja)
+        texto = texto_para_entregador(pedido)
+        return Response({'texto': texto, 'whatsapp': whatsapp_do_entregador(pedido, texto)})
 
     def post(self, request, store_slug, pk):
         loja = self.loja(request, store_slug)
