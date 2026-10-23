@@ -278,7 +278,7 @@ class GeoService:
             if lower_suffix and lower_suffix not in lower_q:
                 query = f"{query}, {suffix}"
 
-        cache_key = _make_cache_key("geocode2", query.strip().lower(), country, restrict_to_city)
+        cache_key = _make_cache_key("geocode3", query.strip().lower(), country, restrict_to_city)  # 3: até 22/10 a validação gravava rua vazia
         cached = cache.get(cache_key)
         if cached:
             return cached
@@ -519,10 +519,16 @@ class GeoService:
         tipos: str | None = 'geocode',
         radius_km: int = 30,
     ) -> List[Dict]:
+        from apps.stores.services.endereco_de_palmas import ponto_contradiz_o_setor
+
         try:
             if tipos != 'geocode':
-                return self.provider.autosuggest(query, center=center, limit=limit, tipos=tipos, radius_km=radius_km)
-            return self.provider.autosuggest(query, center=center, limit=limit, radius_km=radius_km)
+                sugestoes = self.provider.autosuggest(query, center=center, limit=limit, tipos=tipos, radius_km=radius_km)
+            else:
+                sugestoes = self.provider.autosuggest(query, center=center, limit=limit, radius_km=radius_km)
+            # "407 Norte" que cai no Sul (Jardim Aureny, 22/10) vai para o fim:
+            # quem toca na primeira opção não pode ir parar a 13 km.
+            return sorted(sugestoes or [], key=lambda s: ponto_contradiz_o_setor(query, s))
         except Exception as exc:
             logger.error("Autosuggest error: %s", exc, exc_info=True)
             return []

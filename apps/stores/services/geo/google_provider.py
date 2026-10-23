@@ -128,13 +128,24 @@ class GoogleMapsProvider:
             return None
 
         components: Dict[str, str] = {}
+        rua_confirmada = False
         for component in address.get('addressComponents') or []:
             component_name = component.get('componentName') or {}
             value = component_name.get('text') or ''
-            types = set(component.get('componentType') or [])
+            # `componentType` é TEXTO ("route"). `set("route")` virava letras
+            # soltas e nenhum campo casava — rua/bairro/cidade sempre vazios
+            # (22/10, Agrião: "Não achamos Alameda 2, 407 Norte").
+            tipo = component.get('componentType') or []
+            types = {tipo} if isinstance(tipo, str) else set(tipo)
+            confirmado = component.get('confirmationLevel') == 'CONFIRMED'
 
-            if 'route' in types:
+            if 'route' in types and (not components.get('street') or (confirmado and not rua_confirmada)):
+                # Duas `route` ("Alameda" plausível + "Quadra 407 Norte Alameda 1"
+                # confirmada): a confirmada traz a quadra e vale mais.
                 components['street'] = value
+                rua_confirmada = confirmado
+            if 'administrative_area_level_2' in types:
+                components.setdefault('city', value)
             if 'street_number' in types:
                 components['number'] = value
             if 'sublocality_level_1' in types or 'neighborhood' in types:

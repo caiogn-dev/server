@@ -99,3 +99,30 @@ def resultado_bate_com_o_setor(texto: str, geo: dict | None) -> bool:
     if re.search(rf'\b{esperado}\b', achado):
         return True
     return not re.search(rf'\b{oposto}\b', achado)
+
+
+#: A Av. JK divide Palmas: Sul abaixo, Norte acima (Praça dos Girassóis,
+#: lat ≈ -10,184), com ~0,5 km de folga para quadras coladas na avenida.
+#: Mesmos limites do storefront (reconciliarEndereco.js).
+_LIMITE_SUL = -10.180
+_LIMITE_NORTE = -10.189
+
+
+def ponto_contradiz_o_setor(texto: str, sugestao: dict | None) -> bool:
+    """True quando o cliente escreveu Norte/Sul e o PONTO está do outro lado.
+
+    O texto do Google repete a palavra ("407 norte - Jardim Aureny III", 22/10)
+    mesmo com o ponto 13 km ao sul; só a coordenada não mente. Fora de Palmas,
+    sem setor no texto ou sem coordenada: não julga.
+    """
+    setor = analisar(texto).get('setor')
+    if not setor or not sugestao:
+        return False
+    endereco = str(sugestao.get('formatted_address') or sugestao.get('display_name') or '').lower()
+    if 'palmas' not in endereco:
+        return False
+    try:
+        lat = float(sugestao.get('lat') if sugestao.get('lat') is not None else sugestao.get('latitude'))
+    except (TypeError, ValueError):
+        return False
+    return lat >= _LIMITE_SUL if setor == 'Sul' else lat <= _LIMITE_NORTE
