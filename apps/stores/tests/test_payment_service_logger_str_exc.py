@@ -79,3 +79,25 @@ class WebhooksLoggerTest(unittest.TestCase):
         corpo = _metodo(self.src, '_send_payment_confirmation_whatsapp')
         self.assertIn('logger.exception(', corpo,
                       "_send_payment_confirmation_whatsapp precisa usar logger.exception()")
+
+
+class ProcessMercadoPagoFalhaTest(unittest.TestCase):
+    """O caminho de erro precisa marcar o pagamento como FAILED e repassar a exceção
+    original. Se o `except` perde o `as e` e o corpo ainda usa `e`, sai NameError
+    antes do save e o pagamento fica preso em pending."""
+
+    def test_falha_marca_failed_e_repassa_a_excecao_original(self):
+        from unittest import mock
+        from apps.stores.models import StorePayment
+        from apps.stores.services.payment_service import PaymentService
+
+        payment = mock.MagicMock()
+        payment.gateway.get_mercadopago_credentials.return_value = None
+
+        with self.assertRaises(ValueError):
+            PaymentService()._process_mercadopago(payment)
+
+        self.assertEqual(payment.status, StorePayment.PaymentStatus.FAILED)
+        self.assertEqual(payment.error_code, 'mp_error')
+        self.assertIn('credentials', payment.error_message)
+        payment.save.assert_called()

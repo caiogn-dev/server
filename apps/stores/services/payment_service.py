@@ -158,7 +158,7 @@ class PaymentService:
 
             return payment
 
-        except Exception:
+        except Exception as e:
             self.logger.exception("Erro ao processar pagamento MP — payment_id %s", payment.payment_id)
             payment.status = StorePayment.PaymentStatus.FAILED
             payment.error_code = "mp_error"
