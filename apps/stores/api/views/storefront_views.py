@@ -145,6 +145,21 @@ def get_request_cart_key(request):
     return session_id
 
 
+def carrinho_da_requisicao(request, store):
+    """O carrinho ativo deste visitante, SEM criar.
+
+    `CartService.get_or_create_cart` cria carrinho; cotar frete ou conferir
+    cupom não pode gravar uma linha por visitante que só abriu a sacola.
+    """
+    from apps.stores.models import StoreCart
+
+    carrinhos = StoreCart.objects.filter(store=store, is_active=True)
+    if request.user.is_authenticated:
+        return carrinhos.filter(user=request.user).first()
+    chave = get_request_cart_key(request)
+    return carrinhos.filter(session_key=chave, user__isnull=True).first() if chave else None
+
+
 def get_request_origin_base(request):
     """Resolve the originating storefront base URL from request headers."""
     for header_name in ('Origin', 'Referer'):
@@ -1552,20 +1567,7 @@ class StoreDeliveryFeeView(APIView):
         forjado por query param viraria frete grátis anunciado na tela.
         """
         try:
-            from apps.stores.models import StoreCart
-
-            # Leitura pura: `CartService.get_or_create_cart` CRIA carrinho, e
-            # cotar frete não pode gravar uma linha por visitante que só
-            # digitou o endereço.
-            carrinhos = StoreCart.objects.filter(store=store, is_active=True)
-            if request.user.is_authenticated:
-                cart = carrinhos.filter(user=request.user).first()
-            else:
-                chave = get_request_cart_key(request)
-                cart = carrinhos.filter(
-                    session_key=chave, user__isnull=True
-                ).first() if chave else None
-            return subtotal_ou_none(cart)
+            return subtotal_ou_none(carrinho_da_requisicao(request, store))
         except Exception as e:
             # Sem carrinho a cotação segue viva, só sem zerar o frete.
             logger.warning("Frete grátis: subtotal do carrinho indisponível (%s)", e)
@@ -1677,49 +1679,29 @@ class StoreCouponValidateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        try:
-            coupon = StoreCoupon.objects.get(
-                store=store,
-                code__iexact=code,
-                is_active=True
-            )
-            
-            # Check validity (includes min_purchase check). Guest é identificado
-            # pelo telefone quando o front manda — sem isso limites por cliente
-            # e "primeira compra" não valem pra checkout sem login.
-            valid, error_msg = coupon.is_valid(
-                subtotal=subtotal,
-                user=request.user,
-                customer_phone=(request.data.get('customer_phone') or '').strip() or None,
-            )
-            if not valid:
-                return Response({
-                    'valid': False,
-                    'error': error_msg
-                })
+        # A conta é a do checkout (`calculate_discount`), com o escopo do
+        # cupom medido nos itens do carrinho. Esta view tinha a sua cópia —
+        # fixo sem limite ao subtotal, categoria valendo para a sacola inteira
+        # — e a sacola prometia um desconto que o checkout não dava.
+        from apps.stores.services.checkout_service import CheckoutService
 
-            # Calculate discount
-            if coupon.discount_type == 'percentage':
-                discount = subtotal * (coupon.discount_value / 100)
-                if coupon.max_discount:
-                    discount = min(discount, coupon.max_discount)
-            else:
-                discount = coupon.discount_value
-            
-            return Response({
-                'valid': True,
-                'coupon': {
-                    'code': coupon.code,
-                    'discount_type': coupon.discount_type,
-                    'discount_value': str(coupon.discount_value),
-                    'calculated_discount': str(discount),
-                }
-            })
-        except StoreCoupon.DoesNotExist:
-            return Response({
-                'valid': False,
-                'error': 'Invalid coupon code'
-            })
+        cart = carrinho_da_requisicao(request, store)
+        resultado = CheckoutService.validate_coupon(
+            store, code, subtotal, user=request.user,
+            customer_phone=(request.data.get('customer_phone') or '').strip() or None,
+            items=CheckoutService._coupon_items(cart) if cart else None,
+        )
+        if not resultado['valid']:
+            return Response({'valid': False, 'error': resultado['error']})
+        return Response({
+            'valid': True,
+            'coupon': {
+                'code': resultado['code'],
+                'discount_type': resultado['discount_type'],
+                'discount_value': str(resultado['discount_value']),
+                'calculated_discount': str(Decimal(str(resultado['discount'])).quantize(Decimal('0.01'))),
+            }
+        })
 
 
 class StoreWishlistViewSet(viewsets.ViewSet):
