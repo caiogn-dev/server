@@ -20,6 +20,8 @@ ROTULOS = {
     'link': 'Link de pagamento',
     'bank_transfer': 'Transferência',
     'other': 'Outro',
+    # 19/10: pedido de total zero (resgate da fidelidade) — CheckoutService.SEM_COBRANCA.
+    'sem_cobranca': 'Sem cobrança',
 }
 
 #: Pago em mãos na entrega/retirada: nasce pendente e liquida ao entregar.

@@ -241,3 +241,14 @@ class TestBlocos:
     def test_pedido_de_exemplo_monta(self):
         linhas = cl.linhas_da_comanda(cl.pedido_de_exemplo(), cl.layout_padrao())
         assert any('x ' in l['texto'] for l in linhas)
+
+
+def test_forma_de_pagamento_tem_o_nome_do_catalogo_unico():
+    """26/10: a comanda tinha o seu dicionário — 'Cartão na entrega' e 'Vale'
+    onde o painel, o relatório e o recibo dizem 'Cartão na maquininha' e
+    'Vale-refeição'. O nome vem de `formas_de_pagamento.ROTULOS`."""
+    from apps.stores import formas_de_pagamento
+    from apps.stores.services import comanda_linhas
+    for metodo, nome in formas_de_pagamento.ROTULOS.items():
+        assert comanda_linhas._FORMAS[metodo] == nome
+    assert formas_de_pagamento.rotulo('sem_cobranca') == 'Sem cobrança'

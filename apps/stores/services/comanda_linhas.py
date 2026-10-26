@@ -17,6 +17,8 @@ from decimal import Decimal, InvalidOperation
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from apps.stores.formas_de_pagamento import ROTULOS as ROTULOS_DE_FORMA
+
 logger = logging.getLogger(__name__)
 
 BLOCOS = (
@@ -220,12 +222,9 @@ class _Papel:
 
 # ── Rótulos ───────────────────────────────────────────────────────────────────
 
-_FORMAS = {
-    'pix': 'PIX', 'credit_card': 'Cartão de crédito', 'debit_card': 'Cartão de débito',
-    'cash': 'Dinheiro', 'card': 'Cartão', 'mercadopago': 'Mercado Pago',
-    'card_on_delivery': 'Cartão na entrega', 'voucher': 'Vale', 'voucher_link': 'Vale (link)',
-    'sem_cobranca': 'Sem cobrança',
-}
+# O nome da forma é o do catálogo único (painel, relatório e recibo dizem o
+# mesmo); só o gateway antigo `mercadopago` é rótulo de comanda.
+_FORMAS = {**ROTULOS_DE_FORMA, 'mercadopago': 'Mercado Pago'}
 _SITUACAO = {'failed': 'PAGAMENTO FALHOU', 'refunded': 'REEMBOLSADO'}
 _CANAIS = {
     'whatsapp': 'WhatsApp', 'instagram': 'Instagram', 'pdv': 'PDV', 'balcao': 'balcão',
