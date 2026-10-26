@@ -60,8 +60,8 @@ def memoria_do_agente(agent, session_id: str) -> Optional[RedisChatMessageHistor
             url=redis_url,
             ttl=agent.memory_ttl,
         )
-    except Exception as e:
-        logger.error(f"Error creating memory: {e}")
+    except Exception:
+        logger.exception("Erro ao criar memória do agente")
         return None
 
 
@@ -780,8 +780,8 @@ class LangchainService:
                     logger.info(f"[AGENT CONTEXT] Found store via automation context: {store.name}")
             except Conversation.DoesNotExist:
                 logger.warning(f"[AGENT CONTEXT] Conversation {conversation_id} not found")
-            except Exception as e:
-                logger.error(f"[AGENT CONTEXT] Error loading store from automation context: {e}")
+            except Exception:
+                logger.exception("[AGENT CONTEXT] Erro ao carregar loja do contexto de automação")
 
         # If not found, try from agent's associated accounts
         if not store:
@@ -795,8 +795,8 @@ class LangchainService:
                     elif hasattr(first_account, 'stores') and first_account.stores.exists():
                         store = first_account.stores.first()
                         logger.info(f"[AGENT CONTEXT] Found store via account.stores: {store.name}")
-            except Exception as e:
-                logger.error(f"[AGENT CONTEXT] Error loading store from accounts: {e}")
+            except Exception:
+                logger.exception("[AGENT CONTEXT] Erro ao carregar loja das contas do agente")
 
         if not store:
             logger.warning("[AGENT CONTEXT] No store found — context will be incomplete")
@@ -884,8 +884,8 @@ class LangchainService:
             )
             if customer_context:
                 context_parts.append(customer_context)
-        except Exception as e:
-            logger.error(f"[AGENT CONTEXT] Error loading customer/order data: {e}")
+        except Exception:
+            logger.exception("[AGENT CONTEXT] Erro ao carregar dados do cliente/pedido")
 
         # 2. Load store menu/catalog
         try:
@@ -927,11 +927,11 @@ class LangchainService:
                                 delivery_text += f"• Grátis acima de: R$ {store.free_delivery_threshold}\n"
                             context_parts.append(delivery_text)
 
-                except Exception as e:
-                    logger.error(f"[AGENT CONTEXT] Error loading store products: {e}")
+                except Exception:
+                    logger.exception("[AGENT CONTEXT] Erro ao carregar produtos da loja")
 
-        except Exception as e:
-            logger.error(f"[AGENT CONTEXT] Error loading store menu: {e}")
+        except Exception:
+            logger.exception("[AGENT CONTEXT] Erro ao carregar cardápio da loja")
 
         # 3. Load business hours + pickup address
         try:
@@ -948,8 +948,8 @@ class LangchainService:
             if store:
                 from apps.agents.services.contexto_da_loja import texto_do_prazo
                 context_parts.append(texto_do_prazo(store))
-        except Exception as e:
-            logger.error(f"[AGENT CONTEXT] Error loading business hours: {e}")
+        except Exception:
+            logger.exception("[AGENT CONTEXT] Erro ao carregar horário de funcionamento")
 
         try:
             if store:
@@ -965,8 +965,8 @@ class LangchainService:
                     location_parts.append("• Apenas retirada no local (sem entrega)")
                 if location_parts:
                     context_parts.append("\n📍 LOCALIZAÇÃO:\n" + "\n".join(location_parts))
-        except Exception as e:
-            logger.error(f"[AGENT CONTEXT] Error loading location: {e}")
+        except Exception:
+            logger.exception("[AGENT CONTEXT] Erro ao carregar localização da loja")
 
         # 4. Active session state — lets the agent answer "what's in my order?" accurately
         if phone_number:
@@ -1065,8 +1065,8 @@ class LangchainService:
                     if session_parts:
                         context_parts.append("\n🛒 ESTADO DO PEDIDO ATUAL:\n" + "\n".join(session_parts))
 
-            except Exception as e:
-                logger.error(f"[AGENT CONTEXT] Error loading session state: {e}")
+            except Exception:
+                logger.exception("[AGENT CONTEXT] Erro ao carregar estado da sessão")
 
             try:
                 from apps.core.utils import normalize_phone_number
@@ -1106,8 +1106,8 @@ class LangchainService:
                             "Se o cliente disser 'ok', 'entendi', 'certo' ou algo parecido, "
                             "responda brevemente (ex: 'Perfeito! 😊') e não inicie novo fluxo de pedido."
                         )
-            except Exception as e:
-                logger.error(f"[AGENT CONTEXT] Error loading recent order summary: {e}")
+            except Exception:
+                logger.exception("[AGENT CONTEXT] Erro ao carregar resumo do último pedido")
 
         # Combine all context parts
         full_context = "\n\n".join(context_parts)
@@ -2161,8 +2161,8 @@ class LangchainService:
             if isinstance(e, RespostaDoModeloInvalida):
                 # Tipo preservado: quem chama vê que foi a resposta, não a rede.
                 raise
-            logger.error(f"Error processing message: {e}")
-            raise BaseAPIException(f"Erro ao processar mensagem: {str(e)}")
+            logger.error("Erro ao processar mensagem: %s", type(e).__name__)
+            raise BaseAPIException("Erro ao processar mensagem")
 
     def _registrar_resposta_barrada(self, invalida, finish_reason, start_time):
         """Resposta do modelo recusada: log de erro + alerta no GlitchTip.
@@ -2218,8 +2218,8 @@ class LangchainService:
                 })
 
             return history
-        except Exception as e:
-            logger.error(f"Error retrieving conversation history for session {session_id}: {e}")
+        except Exception:
+            logger.exception("Erro ao buscar histórico da sessão %s", session_id)
             return []
 
     def clear_memory(self, session_id: str) -> bool:
@@ -2236,8 +2236,8 @@ class LangchainService:
         try:
             memory.clear()
             return True
-        except Exception as e:
-            logger.error(f"Error clearing memory for session {session_id}: {e}")
+        except Exception:
+            logger.exception("Erro ao limpar memória da sessão %s", session_id)
             return False
 
     def process_message_stream(
@@ -2318,10 +2318,10 @@ class LangchainService:
                 'model': self.agent.model_name,
             }
 
-        except Exception as e:
-            logger.error(f"Error processing message stream: {e}")
+        except Exception:
+            logger.exception("Erro ao processar stream de mensagem")
             yield {
                 'type': 'error',
-                'error': str(e),
+                'error': 'Erro ao processar mensagem',
                 'session_id': session_id,
             }
