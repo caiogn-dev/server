@@ -188,11 +188,11 @@ class StorePaymentGatewayViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
 
         try:
             dados = mercadopago_oauth.trocar_codigo_por_token(codigo)
-        except Exception as e:
+        except Exception:
             # Nada é gravado numa troca que falhou: um gateway com token vazio
             # venceria a conta da plataforma na prioridade do checkout e a loja
             # pararia de vender.
-            logger.error('[MP OAuth] troca de código falhou para %s: %s', slug, e)
+            logger.exception('[MP OAuth] troca de código falhou para %s', slug)
             return de_volta(store.id, motivo='troca_falhou')
 
         if not dados.get('access_token'):
@@ -267,8 +267,8 @@ class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 StorePaymentSerializer(payment).data,
                 status=status.HTTP_201_CREATED
             )
-        except Exception as e:
-            logger.error(f"Error creating payment: {e}")
+        except Exception:
+            logger.exception('Erro ao criar pagamento')
             return Response(
                 {'error': 'Erro ao criar pagamento.'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -291,8 +291,8 @@ class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 gateway_type=serializer.validated_data.get('gateway_type')
             )
             return Response(StorePaymentSerializer(payment).data)
-        except Exception as e:
-            logger.error(f"Error processing payment {payment.id}: {e}")
+        except Exception:
+            logger.exception('Erro ao processar pagamento %s', payment.id)
             return Response(
                 {'error': 'Erro ao processar pagamento.'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -316,8 +316,8 @@ class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 gateway_response=serializer.validated_data.get('gateway_response', {})
             )
             return Response(StorePaymentSerializer(payment).data)
-        except Exception as e:
-            logger.error(f"Error confirming payment {payment.id}: {e}")
+        except Exception:
+            logger.exception('Erro ao confirmar pagamento %s', payment.id)
             return Response(
                 {'error': 'Erro ao confirmar pagamento.'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -342,8 +342,8 @@ class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 gateway_response=serializer.validated_data.get('gateway_response', {})
             )
             return Response(StorePaymentSerializer(payment).data)
-        except Exception as e:
-            logger.error(f"Error failing payment {payment.id}: {e}")
+        except Exception:
+            logger.exception('Erro ao registrar falha de pagamento %s', payment.id)
             return Response(
                 {'error': 'Erro ao registrar falha de pagamento.'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -360,8 +360,8 @@ class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         try:
             payment = service.cancel_payment(str(payment.id))
             return Response(StorePaymentSerializer(payment).data)
-        except Exception as e:
-            logger.error(f"Error cancelling payment {payment.id}: {e}")
+        except Exception:
+            logger.exception('Erro ao cancelar pagamento %s', payment.id)
             return Response(
                 {'error': 'Erro ao cancelar pagamento.'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -385,8 +385,8 @@ class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 reason=serializer.validated_data.get('reason', '')
             )
             return Response(StorePaymentSerializer(payment).data)
-        except Exception as e:
-            logger.error(f"Error refunding payment {payment.id}: {e}")
+        except Exception:
+            logger.exception('Erro ao realizar estorno do pagamento %s', payment.id)
             return Response(
                 {'error': 'Erro ao realizar estorno.'},
                 status=status.HTTP_400_BAD_REQUEST
