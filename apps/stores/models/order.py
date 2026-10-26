@@ -698,7 +698,9 @@ class StoreOrder(BaseModel):
             logger.info(f"[WhatsAppNotification] ✓ Message template formatted successfully")
 
             # Normalize phone
-            phone = self._normalize_phone_number(self.customer_phone)
+            # Número de ENVIO (sem dígito inventado) — ver `_telefone_do_pedido`.
+            from apps.core.utils import telefone_para_envio_e164
+            phone = telefone_para_envio_e164(self.customer_phone or '')
             logger.info(f"[WhatsAppNotification] ✓ Phone normalization: {self.customer_phone} → {phone}")
             
             if not phone:
@@ -788,11 +790,6 @@ class StoreOrder(BaseModel):
             })
         except Exception as e:
             logger.error(f"Failed to send webhook for order {self.order_number}: {e}")
-
-    def _normalize_phone_number(self, raw_phone: str) -> str:
-        """Ensure the phone number is digits-only and has the Brazil prefix."""
-        from apps.core.utils import normalize_phone_number
-        return normalize_phone_number(raw_phone or '')
 
 
 class StoreOrderItem(models.Model):

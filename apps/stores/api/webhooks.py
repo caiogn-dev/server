@@ -376,8 +376,8 @@ class MercadoPagoWebhookView(APIView):
             # DDI pela fonte única: grudar '55' na mão manda a notificação do
             # pedido para um número brasileiro inexistente quando o cliente é
             # estrangeiro.
-            from apps.core.utils import normalize_phone_number
-            phone = normalize_phone_number(order.customer_phone)
+            from apps.core.utils import telefone_para_envio_e164
+            phone = telefone_para_envio_e164(order.customer_phone)
             
             # Build message
             items_text = []
@@ -979,8 +979,8 @@ class OrderWhatsAppView(APIView):
                 )
             
             # DDI pela fonte única — ver comentário acima.
-            from apps.core.utils import normalize_phone_number
-            clean_number = normalize_phone_number(whatsapp_number)
+            from apps.core.utils import telefone_para_envio_e164
+            clean_number = telefone_para_envio_e164(whatsapp_number)
             
             # Build message
             items_text = []

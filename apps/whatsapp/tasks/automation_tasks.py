@@ -537,8 +537,8 @@ def notify_order_status_change(self, order_id: str, new_status: str):
                 # preparo, nem entregue, nem cancelado), enquanto o log dizia
                 # "sent". `send_text_message` NÃO normaliza; quem chama é que
                 # precisa. O outro caminho de notificação já fazia isso.
-                from apps.core.utils import normalize_phone_number
-                destino = normalize_phone_number(order.customer_phone or '')
+                from apps.core.utils import telefone_para_envio_e164
+                destino = telefone_para_envio_e164(order.customer_phone or '')
 
                 if account and destino:
                     # Pelo CANAL, como o caminho de reserva: dentro da janela de
@@ -601,7 +601,7 @@ def request_feedback(order_id: str):
     Solicita avaliação após entrega
     Executado 30 minutos após pedido ser marcado como entregue
     """
-    from apps.core.utils import normalize_phone_number
+    from apps.core.utils import telefone_para_envio_e164
     from apps.stores.models.order import StoreOrder as Order
     from apps.whatsapp.services import MessageService
     from apps.automation.models import AutoMessage
@@ -645,10 +645,10 @@ def request_feedback(order_id: str):
             # convite sumia do inbox — o dono via a mensagem de "entregue" às
             # 12:42 e nada depois, concluindo (com razão) que não foi enviado.
             #
-            # normalize_phone_number: o pedido grava o telefone como o cliente
+            # telefone_para_envio_e164: o pedido grava o telefone como o cliente
             # digitou ('63992618115'). Todo o resto do envio normaliza para
             # E.164 antes de chamar a Meta; só este caminho mandava cru.
-            phone = normalize_phone_number(order.customer_phone or '')
+            phone = telefone_para_envio_e164(order.customer_phone or '')
             if not phone:
                 logger.warning("Order %s has no usable phone for feedback request", order_id)
                 return

@@ -88,8 +88,8 @@ def texto_para_entregador(order: StoreOrder) -> str:
 def whatsapp_do_entregador(order: StoreOrder, texto: str) -> str:
     """Link wa.me com o texto. Sem entregador (ou sem telefone), o WhatsApp
     abre para escolher o contato."""
-    from apps.core.utils import normalize_phone_number
-    numero = normalize_phone_number(getattr(order.entregador, 'telefone', '') or '') if order.entregador_id else ''
+    from apps.core.utils import telefone_para_envio_e164
+    numero = telefone_para_envio_e164(getattr(order.entregador, 'telefone', '') or '') if order.entregador_id else ''
     return f'https://wa.me/{numero}?' + urlencode({'text': texto}, quote_via=quote)
 
 
@@ -105,14 +105,14 @@ def enviar_ao_entregador(order: StoreOrder) -> str:
     modelo aprovado o dono não quis (22/10). Devolve o id da mensagem.
     """
     from apps.automation.mensageiro import janela
-    from apps.core.utils import normalize_phone_number
+    from apps.core.utils import telefone_para_envio_e164
     from apps.whatsapp.models import Message
     from apps.whatsapp.services.message_service import MessageService
 
     entregador = order.entregador
     if entregador is None:
         raise NaoEnviado('Escolha o entregador do pedido primeiro.')
-    telefone = normalize_phone_number(entregador.telefone or '')
+    telefone = telefone_para_envio_e164(entregador.telefone or '')
     if not telefone:
         raise NaoEnviado(f'{entregador.nome} não tem WhatsApp cadastrado em Equipe e entregas.')
     conta = getattr(order.store, 'whatsapp_account', None)
