@@ -51,3 +51,40 @@ class DeliveryViewsAuthTestCase(APITestCase):
         url = f'/api/v1/stores/{self.store.slug}/orders/{self.order.id}/delivery-request/'
         resp = self.client.delete(url)
         self.assertEqual(resp.status_code, 403, resp.content)
+
+
+class UberSoComLojaLigadaTestCase(APITestCase):
+    """26/10: as credenciais do Uber são da PLATAFORMA (env), não da loja.
+    Qualquer operador de qualquer loja pedia corrida cobrada na conta da
+    plataforma — o botão aparecia em todo pedido de entrega e nunca foi usado
+    (583 pedidos, 0 com Uber). Só pede quem tem `metadata.uber_direct`."""
+
+    def setUp(self):
+        from unittest import mock
+        self.owner = User.objects.create_user(username='uowner', email='uo@x.com', password='x')
+        self.store = Store.objects.create(name='UStore', slug='ustore', owner=self.owner, status='active')
+        self.order = StoreOrder.objects.create(
+            store=self.store, customer_name='C', customer_phone='6300000000',
+            subtotal=Decimal('10.00'), total=Decimal('10.00'),
+            status=StoreOrder.OrderStatus.CONFIRMED,
+        )
+        token = Token.objects.create(user=self.owner)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+        patcher = mock.patch('apps.orders.views.create_uber_delivery_request')
+        self.task = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _url(self):
+        return f'/api/v1/stores/{self.store.slug}/orders/{self.order.id}/create-delivery-request/'
+
+    def test_loja_sem_uber_ligado_nao_pede_corrida(self):
+        resp = self.client.post(self._url())
+        self.assertEqual(resp.status_code, 403, resp.content)
+        self.task.delay.assert_not_called()
+
+    def test_loja_com_uber_ligado_pede(self):
+        self.store.metadata = {'uber_direct': True}
+        self.store.save(update_fields=['metadata'])
+        resp = self.client.post(self._url())
+        self.assertEqual(resp.status_code, 202, resp.content)
+        self.task.delay.assert_called_once()

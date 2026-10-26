@@ -36,6 +36,14 @@ class CreateDeliveryRequestView(APIView):
     def post(self, request, store_slug, order_id):
         store = _get_store_for_user(request.user, store_slug)
         order = get_object_or_404(StoreOrder, id=order_id, store=store)
+        # As credenciais do Uber são da plataforma (env), não da loja: sem o
+        # opt-in explícito, qualquer loja pedia corrida na conta da plataforma.
+        metadata = store.metadata if isinstance(store.metadata, dict) else {}
+        if metadata.get('uber_direct') is not True:
+            return Response(
+                {'detail': 'Entrega pelo Uber não está ligada para esta loja.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         try:
             # Check order status
             if order.status not in ['confirmed', 'preparing']:

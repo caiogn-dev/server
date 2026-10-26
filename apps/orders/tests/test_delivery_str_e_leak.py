@@ -31,6 +31,7 @@ def _mock_store():
     s = MagicMock()
     s.id = 'store-uuid-111'
     s.slug = 'loja-test'
+    s.metadata = {'uber_direct': True}  # opt-in da loja (26/10)
     return s
 
 
