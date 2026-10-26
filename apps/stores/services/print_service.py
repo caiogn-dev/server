@@ -494,6 +494,9 @@ def _com_escpos(payload: dict, store, layout: dict | None) -> dict:
     from apps.stores.services.comanda_escpos import escpos_b64_da_comanda
     try:
         layout = comanda_linhas.validar_layout(layout) if layout is not None else comanda_linhas.layout_da_loja(store)
+        if payload['template'] == 'prep_ticket':
+            # Quem monta não mexe com dinheiro: mesma regra da via da cozinha.
+            layout = comanda_linhas.layout_da_cozinha(layout)
         payload['escpos_b64'] = escpos_b64_da_comanda(payload, layout)
     except Exception as exc:  # noqa: BLE001 — sem escpos_b64 o agente monta sozinho
         logger.exception('Comanda ESC/POS falhou (loja %s): %s', getattr(store, 'pk', '?'), exc)

@@ -73,6 +73,13 @@ class TestPayload:
     def test_prep_ticket_tambem(self, pedido):
         assert build_order_print_payload(pedido, template='prep_ticket').get('escpos_b64')
 
+    def test_via_de_montagem_nao_mostra_preco(self, pedido):
+        # Dono 26/10: "no layout de montagem, não é para aparecer os preços".
+        dados = base64.b64decode(build_order_print_payload(pedido, template='prep_ticket')['escpos_b64'])
+        assert b'R$' not in dados
+        assert b'TOTAL' not in dados
+        assert 'Salada Caesar'.encode('cp850') in dados
+
     def test_recibo_do_cliente_nao_leva(self, pedido):
         assert 'escpos_b64' not in build_order_print_payload(pedido, template='customer_receipt')
 
