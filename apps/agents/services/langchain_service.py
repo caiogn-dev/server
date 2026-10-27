@@ -1757,8 +1757,14 @@ class LangchainService:
             endereco = endereco.strip()
             if not endereco:
                 return "Endereço inválido. Informe o endereço completo com quadra/rua e número."
+            # "Retirada na loja" não é endereço (Carlos, 27/10): geocodificado,
+            # virava um ponto no mapa e o pedido nascia entrega.
+            from apps.agents.services.retirada import pediu_retirada
+            if pediu_retirada(endereco):
+                return escolher_retirada.invoke({})
             cart = _get_cart()
             cart['delivery_address'] = endereco
+            cart['delivery_method'] = 'delivery'
             _save_cart(cart)
             if store:
                 try:
@@ -1778,10 +1784,23 @@ class LangchainService:
             return f"Endereço salvo: {endereco}"
 
         @tool
+        def escolher_retirada() -> str:
+            """Marca o pedido atual como RETIRADA NA LOJA (o cliente vem buscar).
+            Use quando o cliente disser que vai retirar, buscar ou pegar na loja.
+            Não há taxa de entrega e não precisa de endereço."""
+            cart = _get_cart()
+            cart['delivery_method'] = 'pickup'
+            cart.pop('delivery_address', None)
+            cart.pop('delivery_fee', None)
+            _save_cart(cart)
+            return "Retirada na loja marcada — sem taxa de entrega."
+
+        @tool
         def finalizar_pedido(endereco: str = "", observacoes: str = "") -> str:
             """
             Finaliza o pedido: cria o pedido no sistema, calcula a taxa de entrega e gera o código PIX.
-            Só chame DEPOIS de ter os itens no carrinho e o endereço confirmado via salvar_endereco_entrega.
+            Só chame DEPOIS de ter os itens no carrinho e o endereço confirmado via salvar_endereco_entrega
+            — ou a retirada marcada via escolher_retirada (aí não precisa de endereço).
             Retorna o valor total, taxa de entrega e o código PIX para pagamento.
             """
             if not store:
@@ -1793,10 +1812,19 @@ class LangchainService:
             items = cart.get("items", [])
             if not items:
                 return "Carrinho vazio. Adicione itens antes de finalizar."
-            effective_address = cart.get('delivery_address') or endereco.strip()
-            if not effective_address:
-                return "Endereço não informado. Use salvar_endereco_entrega com o endereço do cliente."
-            endereco = effective_address
+            from apps.agents.services.retirada import pediu_retirada
+            metodo = cart.get('delivery_method') or ''
+            if metodo != 'delivery' and (
+                metodo == 'pickup' or pediu_retirada(endereco) or pediu_retirada(observacoes)
+            ):
+                metodo = 'pickup'
+                endereco = ''
+            else:
+                metodo = 'delivery'
+                effective_address = cart.get('delivery_address') or endereco.strip()
+                if not effective_address:
+                    return "Endereço não informado. Use salvar_endereco_entrega com o endereço do cliente."
+                endereco = effective_address
 
             try:
                 from apps.whatsapp.services.order_service import WhatsAppOrderService
@@ -1815,7 +1843,7 @@ class LangchainService:
                     items=items,
                     delivery_address=endereco,
                     customer_notes=observacoes,
-                    delivery_method="delivery",
+                    delivery_method=metodo,
                     payment_method="pix",
                 )
 
@@ -1838,7 +1866,7 @@ class LangchainService:
             buscar_produto, detalhes_do_produto, detalhes_do_combo, listar_categorias,
             adicionar_combo_ao_carrinho,
             adicionar_ao_carrinho, ver_carrinho, remover_do_carrinho,
-            salvar_endereco_entrega, finalizar_pedido,
+            salvar_endereco_entrega, escolher_retirada, finalizar_pedido,
             verificar_pedido_pendente, consultar_historico_pedidos,
             informacoes_entrega, consultar_pagamento,
         ]

@@ -520,7 +520,7 @@ class CheckoutService:
         # onde TODOS os caminhos do front passam.
         if lat is not None and lng is not None and address_text:
             from apps.stores.services.coerencia_do_ponto import (
-                geocode_e_preciso, ponto_confere_com_texto,
+                geocode_e_preciso, ponto_confere_com_texto, texto_achou_o_lugar_escrito,
             )
             try:
                 from apps.stores.services.geo.service import GeoService
@@ -528,6 +528,14 @@ class CheckoutService:
                 # Texto que o Google não achou volta como "centro de Palmas":
                 # isso não é prova contra o pin (caso Ana, 05/10).
                 if not geocode_e_preciso(geo):
+                    geo = None
+                # Homônimo em outro bairro (Lais, 27/10: a "outra FIETO") não
+                # é prova contra o pin.
+                elif not texto_achou_o_lugar_escrito(geo, address_obj or address_text):
+                    logger.info(
+                        "Coerência do ponto: '%s' caiu em %s, fora do que foi escrito — mantendo o pin",
+                        address_text, geo.get('neighborhood'),
+                    )
                     geo = None
                 lat_txt = (geo or {}).get('lat')
                 lng_txt = (geo or {}).get('lng')

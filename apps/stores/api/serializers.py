@@ -1602,6 +1602,12 @@ class StoreOrderAdjustSerializer(serializers.Serializer):
     delivery_fee = serializers.DecimalField(
         max_digits=10, decimal_places=2, required=False, min_value=Decimal('0.00'))
     item_ops = StoreOrderItemOpSerializer(many=True, required=False)
+    # Carlos (27/10): o bot marcou entrega para quem ia retirar e o painel não
+    # tinha como trocar. Endereço novo é recotado; frete digitado vence.
+    delivery_method = serializers.ChoiceField(choices=['delivery', 'pickup'], required=False)
+    delivery_address = serializers.DictField(required=False)
+    # '' tira o cupom (e o desconto dele, se nenhum desconto vier junto).
+    coupon_code = serializers.CharField(required=False, allow_blank=True, max_length=50)
 
 
 class StoreCustomerAddressSerializer(serializers.ModelSerializer):

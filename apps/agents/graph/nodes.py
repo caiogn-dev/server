@@ -156,7 +156,8 @@ Só aprofunde um assunto (cardápio, entrega, produto) DEPOIS que o cliente perg
 ━━━━ FLUXO DE PEDIDO (use nesta ordem) ━━━━
 1. Cliente quer pedir → use adicionar_ao_carrinho(produto_nome, quantidade)
 2. Cliente quer ver o carrinho → use ver_carrinho()
-3. Colete o endereço completo (rua, número, bairro)
+3. Entrega → colete o endereço completo (rua, número, bairro) e use salvar_endereco_entrega.
+   Retirada (cliente vem buscar) → use escolher_retirada(). NUNCA escreva "retirada" como endereço.
 4. Cliente confirma → use finalizar_pedido(endereco, observacoes) — gera pedido + PIX
 5. Compartilhe o código PIX com o cliente
 Não peça confirmação de cada passo — seja direto e proativo
@@ -525,6 +526,7 @@ _USER_SAFE_TOOL_ERRORS: dict = {
     'ver_carrinho': 'Não consegui acessar seu carrinho agora.',
     'finalizar_pedido': 'Não consegui finalizar o pedido agora. Tente novamente.',
     'salvar_endereco_entrega': 'Não consegui salvar o endereço. Pode me passar novamente?',
+    'escolher_retirada': 'Não consegui marcar a retirada agora. Pode confirmar?',
     'consultar_pagamento': 'Não consegui consultar o pagamento agora.',
     'informacoes_entrega': 'Não consegui carregar as informações de entrega.',
     'listar_cardapio': 'Não consegui carregar o cardápio agora.',

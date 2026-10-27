@@ -136,3 +136,50 @@ def pino_na_quadra_escrita(reverso, endereco) -> bool:
         'street', 'neighborhood', 'formatted_address',
     )))
     return bool(do_pino) and do_pino <= quadras_escritas
+
+
+def _bairros_do_resultado(nome) -> list:
+    """'Jardim Aureny III (Taquaralto)' → ['jardim aureny iii', 'taquaralto']."""
+    import re
+    partes = re.split(r'[()]', str(nome or ''))
+    return [p for p in (_rua_normalizada(x) for x in partes) if p]
+
+
+def texto_achou_o_lugar_escrito(geo, endereco) -> bool:
+    """O geocode do texto caiu no lugar que o cliente escreveu?
+
+    27/10, Lais (CE-2610278982): "FIETO, 01, Parque" foi achado pelo NOME — o
+    Google devolveu a outra FIETO, em Jardim Aureny III (Taquaralto), a 9,4 km
+    do pin certo na Orla 14. Taquaralto não aparece em nada que ela escreveu:
+    é um homônimo, e homônimo não é prova contra o pin.
+
+    Já na 407 Norte (CE-2610157694, 15/10) o texto caiu em Plano Diretor Norte,
+    o bairro escrito — ali o texto é a prova e o pin na 111 Sul tem que cair.
+    Por isso não se mexe no tipo do resultado (PREMISE_PROXIMITY vale nos dois).
+
+    Prova = o bairro do resultado aparece no que foi escrito, OU a quadra de
+    Palmas escrita é a mesma do resultado. Sem bairro de um dos lados não há o
+    que comparar e o texto continua valendo, como antes.
+    """
+    if not geo:
+        return False
+    if isinstance(endereco, dict):
+        escrito = ' '.join(str(endereco.get(k) or '') for k in (
+            'street', 'number', 'complement', 'neighborhood', 'raw_address', 'label',
+        ))
+        tem_bairro = bool(str(endereco.get('neighborhood') or '').strip())
+    else:
+        escrito = str(endereco or '')
+        tem_bairro = bool(escrito.strip())
+
+    quadras_escritas = _quadras_de_palmas(escrito)
+    if quadras_escritas and quadras_escritas & _quadras_de_palmas(
+        ' '.join(str(geo.get(k) or '') for k in ('street', 'neighborhood', 'formatted_address'))
+    ):
+        return True
+
+    bairros = _bairros_do_resultado(geo.get('neighborhood'))
+    if not bairros or not tem_bairro:
+        return True
+    escrito_normal = f' {_rua_normalizada(escrito)} '
+    return any(f' {b} ' in escrito_normal for b in bairros)

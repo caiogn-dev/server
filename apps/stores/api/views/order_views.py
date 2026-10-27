@@ -425,6 +425,31 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
+        # Endereço novo: estrutura e cota ANTES da transação — geocode e rota
+        # são HTTP e não podem segurar a conexão do banco.
+        novo_endereco, cotacao = None, None
+        metodo = data.get('delivery_method', order.delivery_method)
+        if metodo == 'delivery' and data.get('delivery_address'):
+            from apps.stores.services.endereco_estruturado import estruturar_endereco
+            from apps.stores.services.checkout_service import CheckoutService
+            novo_endereco = estruturar_endereco(dict(data['delivery_address']))
+            if 'delivery_fee' not in data:
+                cotacao = CheckoutService.calculate_delivery_fee_for_payload(
+                    order.store, {'method': 'delivery', 'address': novo_endereco},
+                )
+                if cotacao.get('fee') is None:
+                    return Response(
+                        {'error': cotacao.get('message') or 'Endereço fora da área de entrega.',
+                         'code': 'address_out_of_area'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+        if (metodo == 'delivery' and order.delivery_method == 'pickup'
+                and novo_endereco is None):
+            return Response(
+                {'error': 'Para entrega, informe o endereço.', 'code': 'address_required'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         with transaction.atomic():
             order = StoreOrder.objects.select_for_update().get(pk=order.pk)
 
@@ -485,6 +510,46 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                     {'error': 'O pedido precisa manter pelo menos um item.',
                      'code': 'order_empty'})
 
+            from decimal import Decimal as _D
+            metadata = dict(order.metadata or {})
+
+            if metodo == 'pickup' and (order.delivery_method != 'pickup' or 'delivery_method' in data):
+                if order.delivery_address:
+                    metadata['endereco_antes_da_retirada'] = order.delivery_address
+                order.delivery_method = 'pickup'
+                order.delivery_address = {}
+                if 'delivery_fee' not in data:
+                    order.delivery_fee = _D('0.00')
+            elif metodo == 'delivery':
+                order.delivery_method = 'delivery'
+                if novo_endereco is not None:
+                    if cotacao:
+                        if novo_endereco.get('lat') is None and cotacao.get('lat') is not None:
+                            novo_endereco['lat'] = cotacao['lat']
+                            novo_endereco['lng'] = cotacao['lng']
+                            novo_endereco['coordinate_source'] = cotacao.get('coordinate_source') or 'endereco_escrito'
+                        order.delivery_fee = _D(str(cotacao['fee'])).quantize(_D('0.01'))
+                        metadata['delivery_quote'] = cotacao
+                    order.delivery_address = novo_endereco
+
+            if 'coupon_code' in data:
+                codigo = data['coupon_code'].strip()
+                if codigo:
+                    from apps.stores.services.checkout_service import CheckoutService
+                    subtotal_atual = sum((i.subtotal for i in order.items.all()), _D('0.00'))
+                    v = CheckoutService.validate_coupon(
+                        order.store, codigo, subtotal_atual, customer_phone=order.customer_phone,
+                    )
+                    if not v.get('valid'):
+                        raise DRFValidationError(
+                            {'error': v.get('error') or 'Cupom inválido.', 'code': 'coupon_invalid'})
+                    order.coupon_code = v['code']
+                    order.discount = _D(str(v['discount'])).quantize(_D('0.01'))
+                else:
+                    order.coupon_code = ''
+                    if 'discount' not in data:
+                        order.discount = _D('0.00')
+
             if 'discount' in data:
                 order.discount = data['discount']
             if 'discount_reason' in data:
@@ -497,7 +562,6 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 order.delivery_fee = data['delivery_fee']
 
             # Guard: desconto não pode tornar o total negativo
-            from decimal import Decimal as _D
             subtotal = sum((i.subtotal for i in order.items.all()), _D('0.00'))
             prospective = (subtotal - (order.discount or _D('0.00'))
                            + (order.tax or _D('0.00')) + (order.delivery_fee or _D('0.00'))
@@ -507,9 +571,21 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                     {'error': 'Desconto deixa o total negativo.', 'code': 'total_negative'}
                 )
 
+            # Vale cobra % sobre (subtotal − desconto + frete): mudou a base,
+            # muda o acréscimo. Lais (27/10) teve de ser recalculada à mão.
+            from apps.stores.services.acrescimo_do_vale import acrescimo_do_vale, e_pagamento_com_vale
+            if e_pagamento_com_vale(order.payment_method):
+                order.voucher_fee = acrescimo_do_vale(
+                    order.store,
+                    subtotal - (order.discount or _D('0.00')) + (order.delivery_fee or _D('0.00')),
+                    order.payment_method,
+                )
+            order.metadata = metadata
+
             order.save(update_fields=[
                 'discount', 'manual_discount_reason', 'surcharge_value',
-                'surcharge_reason', 'delivery_fee', 'updated_at',
+                'surcharge_reason', 'delivery_fee', 'delivery_method',
+                'delivery_address', 'coupon_code', 'voucher_fee', 'metadata', 'updated_at',
             ])
             order.recalculate_totals(save=True)
 

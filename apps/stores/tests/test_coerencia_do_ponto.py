@@ -214,3 +214,75 @@ class QuadraDoPinoTests(TestCase):
             'city': 'Palmas', 'state': 'Tocantins',
         })
         self.assertEqual((kw['lat'], kw['lng']), (None, None))
+
+
+# 27/10 — Lais (CE-2610278982): pin certo na Orla 14. O texto "FIETO, 01,
+# Parque" foi achado pelo NOME: o Google devolveu a OUTRA FIETO, em Taquaralto
+# (PREMISE_PROXIMITY, 9,4 km). Taquaralto não aparece em nada do que ela
+# escreveu — é homônimo, não prova contra o pin. Frete R$ 40 em vez de 12,58.
+#
+# 15/10 — CE-2610157694: escreveu "Quadra 407 norte Al 07 lote 58", pin na
+# 111 Sul. O texto voltou PREMISE_PROXIMITY em "Plano Diretor Norte" — o bairro
+# que ela escreveu. Ali o texto É a prova e o pin tem que cair.
+LAIS_PIN = (-10.1984233, -48.3638472)
+FIETO_TAQUARALTO = {
+    'lat': -10.279684, 'lng': -48.3386795, 'location_type': 'PREMISE_PROXIMITY',
+    'neighborhood': 'Jardim Aureny III (Taquaralto)',
+    'formatted_address': 'FIETO, 01 - Jardim Aureny III (Taquaralto), Palmas - TO, Brasil',
+}
+LAIS_ENDERECO = {'street': 'FIETO', 'number': '01', 'neighborhood': 'Parque',
+                 'city': 'Palmas', 'state': 'TO', 'zip_code': '77026035'}
+
+PIN_111_SUL = (-10.1951, -48.3301)
+TEXTO_407_NORTE = {
+    'lat': -10.1713, 'lng': -48.3279, 'location_type': 'PREMISE_PROXIMITY',
+    'neighborhood': 'Plano Diretor Norte',
+    'formatted_address': 'Quadra 407 norte Al 07, 58 - Plano Diretor Norte, Palmas - TO, Brasil',
+}
+ENDERECO_407 = {'street': 'Quadra 407 norte Al 07 lote 58 casa 02', 'number': '58',
+                'neighborhood': 'Plano Diretor Norte', 'city': 'Palmas', 'state': 'Tocantins'}
+
+
+class TextoAchouOLugarEscritoTests(TestCase):
+    def _f(self, geo, endereco):
+        from apps.stores.services.coerencia_do_ponto import texto_achou_o_lugar_escrito
+        return texto_achou_o_lugar_escrito(geo, endereco)
+
+    def test_homonimo_em_outro_bairro_nao_e_prova(self):
+        self.assertFalse(self._f(FIETO_TAQUARALTO, LAIS_ENDERECO))
+
+    def test_texto_no_bairro_escrito_e_prova(self):
+        self.assertTrue(self._f(TEXTO_407_NORTE, ENDERECO_407))
+
+    def test_parte_entre_parenteses_tambem_conta(self):
+        self.assertTrue(self._f(FIETO_TAQUARALTO, {**LAIS_ENDERECO, 'neighborhood': 'Taquaralto'}))
+
+    def test_mesma_quadra_e_prova_mesmo_com_bairro_diferente(self):
+        geo = {**TEXTO_407_NORTE, 'neighborhood': 'Algum Outro'}
+        self.assertTrue(self._f(geo, ENDERECO_407))
+
+    def test_sem_bairro_dos_dois_lados_continua_valendo(self):
+        """Sem ter o que comparar, mantém o comportamento de antes."""
+        self.assertTrue(self._f({**FIETO_TAQUARALTO, 'neighborhood': ''}, LAIS_ENDERECO))
+        self.assertTrue(self._f(FIETO_TAQUARALTO, {'street': 'FIETO', 'city': 'Palmas'}))
+
+
+class PedidoDaLaisTests(TestCase):
+    def _cotar(self, pin, endereco, geo_do_texto):
+        from unittest.mock import patch, MagicMock
+        from apps.stores.services.checkout_service import CheckoutService
+        payload = {'method': 'delivery', 'lat': pin[0], 'lng': pin[1], 'address': endereco}
+        with patch('apps.stores.services.geo.service.GeoService.geocode', return_value=geo_do_texto), \
+             patch('apps.stores.services.geo.service.GeoService.reverse_geocode', return_value={}), \
+             patch('apps.stores.services.unified_delivery_service.UnifiedDeliveryService.calculate_delivery_fee',
+                   return_value={'success': True, 'fee': 12.58, 'distance_km': 8.58}) as calc:
+            CheckoutService.calculate_delivery_fee_for_payload(MagicMock(), payload)
+        return calc.call_args.kwargs
+
+    def test_homonimo_nao_derruba_o_pin(self):
+        kw = self._cotar(LAIS_PIN, LAIS_ENDERECO, FIETO_TAQUARALTO)
+        self.assertEqual((kw['lat'], kw['lng']), LAIS_PIN)
+
+    def test_407_norte_continua_derrubando_o_pin_da_111_sul(self):
+        kw = self._cotar(PIN_111_SUL, ENDERECO_407, TEXTO_407_NORTE)
+        self.assertIsNone(kw['lat'])
