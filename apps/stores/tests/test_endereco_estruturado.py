@@ -105,3 +105,34 @@ class TestBordas:
             'city': 'Palmas', 'state': 'TO',
         })
         assert e['raw_address'] == 'Rua A, 10 - Centro, Palmas, TO'
+
+
+class TestHifenDoClienteNaoEBairro:
+    """27/10, Lais (CE-2610278982): digitou a rua "FIETO - sede temporária
+    Orla 14". O " - " foi lido como separador de bairro, a rua virou só
+    "FIETO", o Google achou a OUTRA FIETO (Taquaralto, 9,4 km), o pin certo
+    na Orla 14 foi descartado e o frete saiu R$ 40 em vez de R$ 12,58.
+
+    O " - " só separa localização quando o que vem depois é localização:
+    termina em UF, cita a cidade ou repete o bairro."""
+
+    LAIS = {
+        'street': 'FIETO - sede temporária Orla 14', 'number': '01',
+        'complement': 'FIETO, SEDE PROVISÓRIA ORLA', 'neighborhood': 'Parque',
+        'city': 'Palmas', 'state': 'TO', 'zip_code': '77026035',
+    }
+
+    def test_rua_com_hifen_do_cliente_fica_inteira(self):
+        e = estruturar_endereco(dict(self.LAIS))
+        assert e['street'] == 'FIETO - sede temporária Orla 14'
+        assert e['neighborhood'] == 'Parque'
+
+    def test_hifen_seguido_do_bairro_informado_ainda_e_cortado(self):
+        e = estruturar_endereco({'street': 'Rua A, 10 - Centro', 'neighborhood': 'Centro', 'city': 'Palmas'})
+        assert e['street'] == 'Rua A'
+        assert e['number'] == '10'
+
+    def test_hifen_seguido_da_cidade_ainda_e_cortado(self):
+        e = estruturar_endereco({'street': 'Rua A, 10 - Aureny I, Palmas', 'city': 'Palmas'})
+        assert e['street'] == 'Rua A'
+        assert e['neighborhood'] == 'Aureny I'

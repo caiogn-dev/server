@@ -88,10 +88,30 @@ def _rua_esta_suja(rua: str, dados: dict) -> bool:
     """
     if not rua:
         return False
-    if _SEPARADOR_BAIRRO in rua:
-        return True
     cidade = _texto(dados.get('city'))
+    if _SEPARADOR_BAIRRO in rua and _cauda_e_localizacao(rua, dados):
+        return True
     return bool(cidade) and cidade.lower() in rua.lower()
+
+
+def _cauda_e_localizacao(rua: str, dados: dict) -> bool:
+    """O que vem depois do " - " é bairro/cidade/UF, ou é o próprio nome?
+
+    27/10, Lais: "FIETO - sede temporária Orla 14" é o nome que ela digitou.
+    Cortado no hífen virou "FIETO", o Google achou a outra FIETO (Taquaralto)
+    e o frete saiu R$ 40 em vez de R$ 12,58. Só é localização quando termina
+    em UF, cita a cidade ou repete o bairro informado.
+    """
+    _, _, cauda = rua.partition(_SEPARADOR_BAIRRO)
+    partes = _partes(cauda)
+    if not partes:
+        return False
+    if _UF.match(partes[-1]):
+        return True
+    baixa = cauda.lower()
+    cidade = _texto(dados.get('city')).lower()
+    bairro = _texto(dados.get('neighborhood')).lower()
+    return bool(cidade and cidade in baixa) or bool(bairro and partes[0].lower() == bairro)
 
 
 def estruturar_endereco(bruto) -> dict:
