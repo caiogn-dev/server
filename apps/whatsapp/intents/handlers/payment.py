@@ -64,6 +64,22 @@ class PaymentStatusHandler(IntentHandler):
                     "⏳ Estou gerando seu código PIX agora...\n\n"
                     "Por favor, aguarde alguns segundos e toque em *PIX* novamente. 🙏"
                 )
+        # "Já paguei." de quem acabou de pagar recebia "Quer fazer um pedido
+        # novo?" (Odaíse, CE-2610275997, 27/10). Pedido pago nas últimas 24h:
+        # confirmar o pagamento.
+        from django.utils import timezone
+        from datetime import timedelta
+        pago = Order.objects.filter(
+            customer_phone=self.conversation.phone_number,
+            **({"store": self.store} if self.store else {}),
+            payment_status=Order.PaymentStatus.PAID,
+            created_at__gte=timezone.now() - timedelta(hours=24),
+        ).order_by('-created_at').first()
+        if pago:
+            return HandlerResult.text(
+                f"✅ O pagamento do pedido #{pago.order_number} já está confirmado!\n\n"
+                f"📦 Status: {pago.get_status_display()}"
+            )
         return HandlerResult.text("Não encontrei pagamentos pendentes. ✅\n\nQuer fazer um pedido novo?")
 
     # ── Cartão e maquininha ────────────────────────────────────────────────
