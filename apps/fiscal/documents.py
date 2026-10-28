@@ -14,6 +14,18 @@ def limpar(valor: str) -> str:
     return re.sub(r'\D', '', valor or '')
 
 
+ISENTO = 'ISENTO'
+
+
+def limpar_ie(valor) -> str:
+    """IE do destinatário: só dígitos, ou ISENTO — que a SEFAZ distingue de
+    "não contribuinte" e a limpeza por dígitos apagava (HOA, 28/10)."""
+    texto = str(valor or '').strip()
+    if texto.upper() == ISENTO:
+        return ISENTO
+    return limpar(texto)
+
+
 def _digito(base: str, pesos: list[int]) -> str:
     soma = sum(int(d) * p for d, p in zip(base, pesos))
     resto = soma % 11

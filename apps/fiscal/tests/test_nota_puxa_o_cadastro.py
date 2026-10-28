@@ -98,3 +98,18 @@ class ConsultaForaDoArTests(APITestCase):
             resp = self.client.get(f'/api/v1/stores/{store.slug}/fiscal/cnpj/{CNPJ_CLIENTE}/')
         self.assertEqual(resp.status_code, 503)
         self.assertIn('à mão', resp.data['error'])
+
+
+def test_isento_sobrevive_a_limpeza_do_destinatario():
+    from apps.fiscal import destinatarios
+    from apps.fiscal.models import FiscalDocument
+    limpo = destinatarios.normalizar(
+        {'documento': CNPJ_CLIENTE, 'nome': 'HOA', 'inscricao_estadual': 'isento', 'endereco': ENDERECO_DO_CADASTRO},
+        FiscalDocument.Modelo.NFE,
+    )
+    assert limpo['inscricao_estadual'] == 'ISENTO'
+    limpo = destinatarios.normalizar(
+        {'documento': CNPJ_CLIENTE, 'nome': 'HOA', 'inscricao_estadual': '29.123.456-7', 'endereco': ENDERECO_DO_CADASTRO},
+        FiscalDocument.Modelo.NFE,
+    )
+    assert limpo['inscricao_estadual'] == '291234567'

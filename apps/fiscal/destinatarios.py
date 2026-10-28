@@ -1,7 +1,7 @@
 """Destinatário da nota: validar, guardar e carimbar no pedido."""
 import uuid
 
-from .documents import classificar, limpar
+from .documents import classificar, limpar, limpar_ie
 from .models import DestinatarioFiscal, FiscalDocument
 from .services import CAMPOS_ENDERECO
 
@@ -54,7 +54,7 @@ def normalizar(dados: dict, modelo: str = FiscalDocument.Modelo.NFE) -> dict:
     return {
         'documento': documento,
         'nome': nome,
-        'inscricao_estadual': limpar(str(dados.get('inscricao_estadual') or ''))[:20],
+        'inscricao_estadual': limpar_ie(dados.get('inscricao_estadual'))[:20],
         'email': _texto(dados.get('email'), 254),
         'telefone': limpar(str(dados.get('telefone') or ''))[:20],
         'endereco': endereco,
