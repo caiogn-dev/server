@@ -1140,10 +1140,18 @@ class StorePrintJobSerializer(serializers.ModelSerializer):
 class StoreOrderCreateItemSerializer(serializers.Serializer):
     """Line item payload for order creation."""
 
-    product_id = serializers.UUIDField()
+    # Produto OU combo (28/10): o painel não tinha como lançar combo no balcão.
+    product_id = serializers.UUIDField(required=False)
+    combo_id = serializers.UUIDField(required=False)
+    selections = serializers.DictField(required=False, default=dict)
     quantity = serializers.IntegerField(min_value=1)
     options = serializers.DictField(required=False, default=dict)
     notes = serializers.CharField(required=False, allow_blank=True, default='')
+
+    def validate(self, attrs):
+        if bool(attrs.get('product_id')) == bool(attrs.get('combo_id')):
+            raise serializers.ValidationError('Cada item é um produto ou um combo.')
+        return attrs
 
 
 class StoreOrderCreateSerializer(serializers.Serializer):
@@ -1252,6 +1260,39 @@ class StoreOrderCreateSerializer(serializers.Serializer):
         return store
 
     @transaction.atomic
+    def _resolver_combo(self, store, item, idx):
+        """Combo do painel: valida as escolhas e o estoque como o checkout."""
+        from apps.stores.models import StoreCartComboItem, StoreCombo
+        from apps.stores.services import estoque_das_escolhas
+        from apps.stores.validators import ComboSelectionValidator
+
+        combo = StoreCombo.objects.filter(id=item['combo_id'], store=store, is_active=True).first()
+        if not combo:
+            raise serializers.ValidationError({'items': f'Combo não encontrado no item {idx + 1}'})
+        selections = item.get('selections') or {}
+        validador = ComboSelectionValidator(combo)
+        if not validador.validate(selections):
+            raise serializers.ValidationError({'items': f'{combo.name}: ' + ' '.join(validador.errors)})
+        quantity = item.get('quantity', 1)
+        try:
+            estoque_das_escolhas.validar_disponivel(selections, quantity)
+        except ValueError as e:
+            raise serializers.ValidationError({'items': f'{combo.name}: {e}'})
+        if combo.track_stock and combo.stock_quantity < quantity:
+            raise serializers.ValidationError({'items': f'{combo.name} esgotado.'})
+        unit_price = combo.compute_unit_price(selections)
+        return {
+            'combo': combo,
+            'selections': selections,
+            'quantity': quantity,
+            'unit_price': unit_price,
+            'subtotal': unit_price * quantity,
+            'notes': item.get('notes', ''),
+            # Não salvo: só para reaproveitar o snapshot das escolhas do checkout.
+            'carrinho': StoreCartComboItem(combo=combo, group_selections=selections,
+                                           customizations={'selections': selections}),
+        }
+
     def create(self, validated_data):
         store = self._resolve_store(validated_data)
         # A loja aceita esse jeito de receber? Esconder a opção no cardápio não
@@ -1274,7 +1315,14 @@ class StoreOrderCreateSerializer(serializers.Serializer):
         subtotal = Decimal('0.00')
         resolved_items = []
 
+        resolved_combos = []
+
         for idx, item in enumerate(items_data):
+            if item.get('combo_id'):
+                combo_linha = self._resolver_combo(store, item, idx)
+                subtotal += combo_linha['subtotal']
+                resolved_combos.append(combo_linha)
+                continue
             product = StoreProduct.objects.filter(
                 id=item['product_id'],
                 store=store,
@@ -1495,6 +1543,42 @@ class StoreOrderCreateSerializer(serializers.Serializer):
                     sold_count=F('sold_count') + item['quantity'],
                 )
                 stock_changed = True
+
+        # Combos: mesma gravação do checkout (linha vendável + escolhas) e
+        # cada sabor escolhido sai do estoque dele.
+        if resolved_combos:
+            from django.db.models import F
+            from apps.stores.models import StoreCombo, StoreOrderComboItem
+            from apps.stores.services import estoque_das_escolhas
+            from apps.stores.services.checkout_service import CheckoutService
+            for c in resolved_combos:
+                combo = c['combo']
+                order_item = StoreOrderItem.objects.create(
+                    order=order, product=None, variant=None,
+                    product_name=f"Combo: {combo.name}", variant_name='', sku='',
+                    unit_price=c['unit_price'], quantity=c['quantity'], subtotal=c['subtotal'],
+                    options={'selections': c['selections']}, notes=c['notes'],
+                )
+                snapshot = CheckoutService.build_combo_selection_snapshot(c['carrinho'])
+                order_combo = StoreOrderComboItem.objects.create(
+                    order=order, order_item=order_item, combo=combo, quantity=c['quantity'],
+                    group_selections=snapshot['group_selections'],
+                    selected_variant_ids=snapshot['selected_variant_ids'],
+                    selected_variants_data=snapshot['selected_variants_data'],
+                    display_data={
+                        'combo_name': combo.name,
+                        'unit_price': str(c['unit_price']),
+                        'customizations': {'selections': c['selections']},
+                        'groups': snapshot['display_groups'],
+                        estoque_das_escolhas.MARCA: True,
+                    },
+                )
+                if estoque_das_escolhas.baixar(order_combo):
+                    stock_changed = True
+                if combo.track_stock:
+                    StoreCombo.objects.filter(id=combo.id).update(
+                        stock_quantity=F('stock_quantity') - c['quantity']
+                    )
 
         if stock_changed:
             from apps.stores.services.checkout_service import _invalidate_agent_menu_safe
