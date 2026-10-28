@@ -1176,6 +1176,11 @@ class StoreOrderCreateSerializer(serializers.Serializer):
 
     payment_method = serializers.CharField(required=False, allow_blank=True)
     coupon_code = serializers.CharField(required=False, allow_blank=True)
+    # Dinheiro: troco para quanto (0 = não precisa). Vale na entrega: bandeira.
+    change_for = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=False, allow_null=True, min_value=Decimal('0.00'),
+    )
+    voucher_brand = serializers.CharField(required=False, allow_blank=True, max_length=30)
     discount = serializers.DecimalField(
         max_digits=10,
         decimal_places=2,
@@ -1314,6 +1319,25 @@ class StoreOrderCreateSerializer(serializers.Serializer):
         except (ValueError, InvalidOperation):
             surcharge = Decimal('0.00')
 
+        # Cupom (28/10): era gravado cru — sem conferir validade nem descontar.
+        # Mesma conta do checkout; soma ao desconto manual do atendente.
+        cupom = None
+        codigo_do_cupom = (validated_data.get('coupon_code') or '').strip()
+        if codigo_do_cupom:
+            from apps.stores.models import StoreCoupon
+            from apps.stores.services.checkout_service import CheckoutService
+            v = CheckoutService.validate_coupon(
+                store, codigo_do_cupom, subtotal, customer_phone=validated_data.get('customer_phone'),
+            )
+            if not v.get('valid'):
+                raise serializers.ValidationError({'coupon_code': v.get('error') or 'Cupom inválido.'})
+            cupom = StoreCoupon.objects.get(id=v['coupon_id'])
+            # Reserva a vaga como o checkout (atômico; reverte com o pedido).
+            if not cupom.increment_usage():
+                raise serializers.ValidationError({'coupon_code': 'Este cupom esgotou.'})
+            validated_data['coupon_code'] = v['code']
+            discount += Decimal(str(v['discount'])).quantize(Decimal('0.01'))
+
         tax = Decimal('0.00')
         total = subtotal - discount + tax + delivery_fee + surcharge
         if total < Decimal('0.00'):
@@ -1339,6 +1363,9 @@ class StoreOrderCreateSerializer(serializers.Serializer):
             metadata['source'] = canal
         if validated_data.get('suppress_notifications'):
             metadata['suppress_notifications'] = True
+        bandeira = (validated_data.get('voucher_brand') or '').strip().lower()
+        if bandeira and validated_data.get('payment_method') == 'voucher_on_delivery':
+            metadata['voucher_brand'] = bandeira
         adjustment_reason = (validated_data.get('adjustment_reason') or '').strip()
         if 'delivery_fee' in validated_data:
             metadata['manual_delivery_fee'] = {
@@ -1401,6 +1428,8 @@ class StoreOrderCreateSerializer(serializers.Serializer):
             surcharge_reason=adjustment_reason[:255] if surcharge > 0 else '',
             total=total,
             payment_method=validated_data.get('payment_method', ''),
+            change_for=(validated_data.get('change_for')
+                        if validated_data.get('payment_method') == 'cash' else None),
             delivery_method=validated_data.get('delivery_method', 'delivery'),
             delivery_address=delivery_address,
             delivery_notes=validated_data.get('delivery_notes', ''),
@@ -1412,6 +1441,10 @@ class StoreOrderCreateSerializer(serializers.Serializer):
             # Ninguém gravava — 51 pedidos de PDV da Cê em 30 dias sem dono (22/10).
             created_by_staff=request.user if request and request.user.is_authenticated else None,
         )
+
+        if cupom is not None:
+            from apps.stores.services.checkout_service import CheckoutService
+            CheckoutService.record_coupon_redemption(order, cupom)
 
         # Trava e valida o estoque ANTES de decrementar. Este caminho (PDV/painel)
         # só tinha copiado o UPDATE com F() do storefront, não a validação com

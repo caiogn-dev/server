@@ -17,6 +17,10 @@ ROTULOS = {
     'card_on_delivery': 'Cartão na maquininha',
     'voucher': 'Vale-refeição',
     'voucher_link': 'Vale-refeição (link)',
+    # 28/10: vale passado na maquininha na entrega (pedido do painel).
+    'voucher_on_delivery': 'Vale na entrega',
+    # 28/10: fiado ia como `cash` + nota e virava PAGO ao entregar.
+    'fiado': 'Fiado (a receber)',
     'link': 'Link de pagamento',
     'bank_transfer': 'Transferência',
     'other': 'Outro',
@@ -25,7 +29,7 @@ ROTULOS = {
 }
 
 #: Pago em mãos na entrega/retirada: nasce pendente e liquida ao entregar.
-PAGOS_NA_ENTREGA = frozenset({'cash', 'card_on_delivery'})
+PAGOS_NA_ENTREGA = frozenset({'cash', 'card_on_delivery', 'voucher_on_delivery'})
 
 
 def rotulo(metodo) -> str:
