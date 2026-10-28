@@ -1259,7 +1259,6 @@ class StoreOrderCreateSerializer(serializers.Serializer):
 
         return store
 
-    @transaction.atomic
     def _resolver_combo(self, store, item, idx):
         """Combo do painel: valida as escolhas e o estoque como o checkout."""
         from apps.stores.models import StoreCartComboItem, StoreCombo
@@ -1293,6 +1292,10 @@ class StoreOrderCreateSerializer(serializers.Serializer):
                                            customizations={'selections': selections}),
         }
 
+    # O decorador é DO create (o select_for_update do estoque exige transação).
+    # 28/10: um método inserido entre os dois roubou o decorador e todo pedido
+    # do painel deu 500 em produção.
+    @transaction.atomic
     def create(self, validated_data):
         store = self._resolve_store(validated_data)
         # A loja aceita esse jeito de receber? Esconder a opção no cardápio não
