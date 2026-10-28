@@ -88,3 +88,8 @@ class NovoPedidoPagamentoTests(APITestCase):
         from apps.stores.formas_de_pagamento import rotulo
         self.assertEqual(rotulo('voucher_on_delivery'), 'Vale na entrega')
         self.assertEqual(rotulo('fiado'), 'Fiado (a receber)')
+
+    def test_nota_fiscal_conhece_vale_e_fiado(self):
+        from apps.fiscal.services import FORMA_PAGAMENTO
+        self.assertEqual(FORMA_PAGAMENTO['voucher_on_delivery'][0], '99')
+        self.assertEqual(FORMA_PAGAMENTO['fiado'][0], '05')

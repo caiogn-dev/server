@@ -112,6 +112,9 @@ FORMA_PAGAMENTO = {
     'link': ('99', 'Link de pagamento'),
     'voucher': ('99', 'Vale refeicao/alimentacao'),
     'voucher_link': ('99', 'Vale refeicao/alimentacao'),
+    'voucher_on_delivery': ('99', 'Vale refeicao/alimentacao'),
+    # Fiado = crédito concedido pela loja (tPag 05 "Crédito Loja").
+    'fiado': ('05', ''),
 }
 CARTAO = {'03', '04'}
 

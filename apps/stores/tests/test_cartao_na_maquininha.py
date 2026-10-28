@@ -77,7 +77,9 @@ class CatalogoDeFormasTests(APITestCase):
         assert formas.rotulo('voucher') == 'Vale-refeição'
 
     def test_pagos_na_entrega(self):
-        assert formas.PAGOS_NA_ENTREGA == frozenset({'cash', 'card_on_delivery'})
+        # 28/10: vale na maquininha também liquida na entrega; fiado não.
+        assert formas.PAGOS_NA_ENTREGA == frozenset({'cash', 'card_on_delivery', 'voucher_on_delivery'})
+        assert 'fiado' not in formas.PAGOS_NA_ENTREGA
 
     def test_relatorio_e_nota_conhecem_a_maquininha(self):
         from apps.fiscal.services import FORMA_PAGAMENTO
