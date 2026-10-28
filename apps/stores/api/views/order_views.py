@@ -1264,11 +1264,25 @@ class StoreCustomerViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             qs, _ = filter_by_store(qs, store_param)
         search = self.request.query_params.get('search')
         if search:
-            qs = qs.filter(
-                Q(user__email__icontains=search) |
-                Q(phone__icontains=search) |
-                Q(whatsapp__icontains=search)
+            # Por nome também: o campo diz "Buscar por nome, e-mail ou
+            # telefone" e só achava por e-mail/telefone (HOA, 27/10).
+            from django.db.models import Value
+            from django.db.models.functions import Concat
+            filtro = (
+                Q(nome_completo__icontains=search)
+                | Q(razao_social__icontains=search)
+                | Q(nome_fantasia__icontains=search)
+                | Q(email__icontains=search)
+                | Q(user__email__icontains=search)
+                | Q(phone__icontains=search)
+                | Q(whatsapp__icontains=search)
             )
+            digitos = ''.join(ch for ch in search if ch.isdigit())
+            if len(digitos) >= 3:
+                filtro |= Q(documento__contains=digitos) | Q(phone__contains=digitos)
+            qs = qs.annotate(
+                nome_completo=Concat('user__first_name', Value(' '), 'user__last_name'),
+            ).filter(filtro)
         # prefetch_related('address_list'): get_default_address() e o campo
         # 'addresses' do serializer eram lidos por linha → N+1 em
         # store_customer_addresses. Com o prefetch, é 1 query p/ todos os endereços.

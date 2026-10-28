@@ -30,13 +30,14 @@ class CustomerSearchSerializer(serializers.ModelSerializer):
     """
     addresses = serializers.SerializerMethodField()
     name = serializers.SerializerMethodField()
+    cadastro = serializers.SerializerMethodField()
 
     class Meta:
         model = UnifiedUser
         fields = [
             'id', 'name', 'phone_number', 'email',
             'total_orders', 'total_spent', 'last_order_at',
-            'addresses',
+            'addresses', 'cadastro',
         ]
 
     def get_name(self, obj):
@@ -60,13 +61,55 @@ class CustomerSearchSerializer(serializers.ModelSerializer):
                     return nome
         return obj.name
 
+    def _cliente_da_loja(self, obj):
+        store = self.context.get('store')
+        if not store:
+            return None
+        cache = self.context.setdefault('_clientes_da_loja', {})
+        if obj.pk not in cache:
+            cache[obj.pk] = (
+                obj.store_customers.filter(store=store).prefetch_related('address_list').first()
+            )
+        return cache[obj.pk]
+
+    def get_cadastro(self, obj):
+        """PF/PJ e documento do cadastro DESTA loja — o pedido e a nota usam."""
+        c = self._cliente_da_loja(obj)
+        if c is None:
+            return None
+        return {
+            'id': str(c.id),
+            'tipo_pessoa': c.tipo_pessoa,
+            'documento': c.documento,
+            'razao_social': c.razao_social,
+            'nome_fantasia': c.nome_fantasia,
+            'inscricao_estadual': c.inscricao_estadual,
+            'email': c.email,
+        }
+
     def get_addresses(self, obj):
         store = self.context.get('store')
         if store:
             qs = obj.addresses.filter(tenant=store)
         else:
             qs = obj.addresses.all()
-        return UserAddressSerializer(qs, many=True).data
+        enderecos = list(UserAddressSerializer(qs, many=True).data)
+        # O endereço salvo na tela Clientes (StoreCustomerAddress) não
+        # aparecia no novo pedido, que só lia UserAddress (27/10).
+        vistos = {((e.get('street') or '').strip().lower(), (e.get('number') or '').strip()) for e in enderecos}
+        c = self._cliente_da_loja(obj)
+        for a in (c.address_list.all() if c else []):
+            chave = ((a.street or '').strip().lower(), (a.number or '').strip())
+            if chave in vistos:
+                continue
+            vistos.add(chave)
+            enderecos.append({
+                'id': str(a.id), 'label': a.label, 'street': a.street, 'number': a.number,
+                'neighborhood': a.neighborhood, 'complement': a.complement, 'city': a.city,
+                'state': a.state, 'zip_code': a.zip_code, 'lat': None, 'lng': None,
+                'is_default': a.is_default, 'created_at': a.created_at,
+            })
+        return enderecos
 
 
 class TeamMemberUserSerializer(serializers.ModelSerializer):

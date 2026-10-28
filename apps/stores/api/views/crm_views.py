@@ -88,6 +88,10 @@ class CustomerSearchView(APIView):
         digitos = ''.join(ch for ch in q if ch.isdigit())
         if len(digitos) >= 4:
             busca |= Q(phone_number__icontains=digitos)
+            busca |= Q(store_customers__store=store, store_customers__documento__contains=digitos)
+        # Empresa: pela razão social e pelo nome fantasia do cadastro da loja.
+        busca |= Q(store_customers__store=store, store_customers__razao_social__icontains=q)
+        busca |= Q(store_customers__store=store, store_customers__nome_fantasia__icontains=q)
 
         escopo = (
             Q(store_customers__store=store)

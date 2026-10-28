@@ -423,6 +423,16 @@ class PedidosParaNotaView(APIView):
                 'endereco': retrato.get('endereco') or {},
             }
         _, documento = classificar(documento_do_consumidor(order))
+        cadastro = None
+        if not documento:
+            # O cadastro do cliente (PF/PJ, 27/10): CNPJ, razão social e IE
+            # guardados uma vez, em vez de redigitados a cada nota.
+            cadastro = cadastro_do_cliente(order)
+            if cadastro is not None:
+                documento = cadastro.documento
+                salvo = DestinatarioFiscal.objects.filter(store=order.store, documento=documento).first()
+                if salvo is not None:
+                    salvos = {**salvos, documento: salvo}
         salvo = salvos.get(documento)
         if salvo is not None:
             dados = destinatarios.como_dict(salvo)
@@ -433,13 +443,30 @@ class PedidosParaNotaView(APIView):
         endereco = order.delivery_address if isinstance(order.delivery_address, dict) else {}
         return {
             'documento': documento,
-            'nome': order.customer_name,
-            'inscricao_estadual': str(metadata.get('ie_nota') or ''),
-            'email': '',
+            'nome': (cadastro.razao_social if cadastro and cadastro.razao_social else order.customer_name),
+            'inscricao_estadual': (cadastro.inscricao_estadual if cadastro else '') or str(metadata.get('ie_nota') or ''),
+            'email': cadastro.email if cadastro else '',
             'endereco': {
                 campo: str(endereco.get(campo) or '') for campo in destinatarios.CAMPOS_DO_ENDERECO
             },
         }
+
+
+def cadastro_do_cliente(order):
+    """StoreCustomer com documento do cliente do pedido (pelo usuário ou telefone)."""
+    from apps.stores.models import StoreCustomer
+    from django.db.models import Q
+    filtro = Q()
+    if order.customer_id:
+        filtro |= Q(user_id=order.customer_id)
+    if order.customer_phone:
+        filtro |= Q(phone=order.customer_phone)
+    if not filtro:
+        return None
+    return (
+        StoreCustomer.objects.filter(store=order.store).filter(filtro)
+        .exclude(documento='').first()
+    )
 
 
 class ConsultaCnpjView(APIView):
