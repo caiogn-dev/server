@@ -31,7 +31,7 @@ class EnvioInvalido(ValueError):
 
 
 class EnvioFalhou(Exception):
-    """O provedor de e-mail recusou ou está fora — 502, tentar de novo."""
+    """O provedor de e-mail recusou ou está fora — 503 (502 a Cloudflare engole), tentar de novo."""
 
 
 def _destinatario_salvo(doc: FiscalDocument):

@@ -91,6 +91,42 @@ def como_dict(destinatario: DestinatarioFiscal) -> dict:
     }
 
 
+def endereco_do_cliente(customer) -> dict:
+    """Endereço principal do cadastro do cliente, no formato da nota."""
+    bruto = (customer.get_default_address() if customer is not None else None) or {}
+    return {campo: str(bruto.get(campo) or '') for campo in CAMPOS_DO_ENDERECO}
+
+
+def completar_endereco(endereco: dict, customer) -> dict:
+    """Endereço sem rua (retirada, cadastro antigo) cai no do cadastro do cliente."""
+    endereco = {campo: str((endereco or {}).get(campo) or '') for campo in CAMPOS_DO_ENDERECO}
+    if endereco['street'] or customer is None:
+        return endereco
+    do_cadastro = endereco_do_cliente(customer)
+    return do_cadastro if do_cadastro['street'] else endereco
+
+
+def do_cliente(customer) -> dict:
+    """Cliente com CPF/CNPJ no cadastro, no formato de destinatário salvo.
+
+    Antes a lista de salvos só tinha quem já recebeu nota — o cliente PJ
+    cadastrado com tudo preenchido não aparecia (28/10).
+    """
+    nome = customer.razao_social or customer.nome_fantasia
+    if not nome and customer.user_id:
+        nome = customer.user.get_full_name()
+    return {
+        'id': f'cliente:{customer.id}',
+        'documento': customer.documento,
+        'nome': nome or '',
+        'inscricao_estadual': customer.inscricao_estadual,
+        'email': customer.email,
+        'telefone': customer.phone,
+        'customer_id': str(customer.id),
+        'endereco': endereco_do_cliente(customer),
+    }
+
+
 def carimbar_no_pedido(order, destinatario: DestinatarioFiscal) -> None:
     """Grava no pedido o retrato do destinatário que vai na nota.
 

@@ -258,7 +258,7 @@ class CancelarNotaView(APIView):
             logger.exception('Falha ao cancelar nota %s', doc.id)
             return Response(
                 {'error': 'Falha de comunicação com o provedor fiscal. Tente novamente.'},
-                status=status.HTTP_502_BAD_GATEWAY,
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         return Response(nota_como_dict(doc))
 
@@ -277,7 +277,7 @@ class EnviarNotaPorEmailView(APIView):
         except EnvioFalhou:
             return Response(
                 {'error': 'O e-mail não saiu. Tente novamente em instantes.'},
-                status=status.HTTP_502_BAD_GATEWAY,
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         return Response(nota_como_dict(doc))
 
@@ -287,15 +287,33 @@ class DestinatariosView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, store_slug):
+        from apps.stores.models import StoreCustomer
         store = _loja_do_painel(request, store_slug)
         lista = DestinatarioFiscal.objects.filter(store=store)
+        clientes = (
+            StoreCustomer.objects.filter(store=store).exclude(documento='')
+            .select_related('user').prefetch_related('address_list')
+        )
         busca = (request.query_params.get('q') or '').strip()
         if busca:
             criterio = Q(nome__icontains=busca)
+            do_cliente = Q(razao_social__icontains=busca) | Q(nome_fantasia__icontains=busca)
             if limpar(busca):
                 criterio |= Q(documento__icontains=limpar(busca))
+                do_cliente |= Q(documento__icontains=limpar(busca))
             lista = lista.filter(criterio)
-        return Response([destinatarios.como_dict(d) for d in lista[:50]])
+            clientes = clientes.filter(do_cliente)
+        clientes = {c.documento: c for c in clientes[:200]}
+
+        resultado = []
+        for salvo in lista[:50]:
+            dados = destinatarios.como_dict(salvo)
+            cliente = clientes.pop(salvo.documento, None)
+            dados['endereco'] = destinatarios.completar_endereco(dados['endereco'], cliente)
+            resultado.append(dados)
+        # O cadastro do cliente também é destinatário, mesmo sem nota emitida.
+        resultado += [destinatarios.do_cliente(c) for c in list(clientes.values())[:50]]
+        return Response(resultado)
 
     def post(self, request, store_slug):
         store = _loja_do_painel(request, store_slug)
@@ -413,6 +431,9 @@ class PedidosParaNotaView(APIView):
         """O que já dá para preencher sozinho: retrato da última emissão,
         depois o cadastro do documento, depois o que o pedido carrega."""
         metadata = order.metadata or {}
+        # O cadastro do cliente (PF/PJ, 27/10): CNPJ, razão social, IE e
+        # endereço guardados uma vez, em vez de redigitados a cada nota.
+        cadastro = cadastro_do_cliente(order)
         retrato = metadata.get('destinatario_nota')
         if isinstance(retrato, dict) and retrato.get('documento'):
             return {
@@ -420,14 +441,15 @@ class PedidosParaNotaView(APIView):
                 'nome': retrato.get('nome') or '',
                 'inscricao_estadual': retrato.get('inscricao_estadual') or '',
                 'email': getattr(salvos.get(retrato.get('documento')), 'email', ''),
-                'endereco': retrato.get('endereco') or {},
+                'endereco': destinatarios.completar_endereco(
+                    retrato.get('endereco'),
+                    cadastro if cadastro and cadastro.documento == retrato.get('documento') else None,
+                ),
             }
         _, documento = classificar(documento_do_consumidor(order))
-        cadastro = None
+        if documento and cadastro is not None and cadastro.documento != documento:
+            cadastro = None
         if not documento:
-            # O cadastro do cliente (PF/PJ, 27/10): CNPJ, razão social e IE
-            # guardados uma vez, em vez de redigitados a cada nota.
-            cadastro = cadastro_do_cliente(order)
             if cadastro is not None:
                 documento = cadastro.documento
                 salvo = DestinatarioFiscal.objects.filter(store=order.store, documento=documento).first()
@@ -436,11 +458,13 @@ class PedidosParaNotaView(APIView):
         salvo = salvos.get(documento)
         if salvo is not None:
             dados = destinatarios.como_dict(salvo)
+            dados['endereco'] = destinatarios.completar_endereco(dados['endereco'], cadastro)
             return {
                 chave: dados[chave]
                 for chave in ('documento', 'nome', 'inscricao_estadual', 'email', 'endereco')
             }
         endereco = order.delivery_address if isinstance(order.delivery_address, dict) else {}
+        endereco = destinatarios.completar_endereco(endereco, cadastro)
         return {
             'documento': documento,
             'nome': (cadastro.razao_social if cadastro and cadastro.razao_social else order.customer_name),
@@ -454,13 +478,17 @@ class PedidosParaNotaView(APIView):
 
 def cadastro_do_cliente(order):
     """StoreCustomer com documento do cliente do pedido (pelo usuário ou telefone)."""
+    from apps.core.utils import phone_variants
     from apps.stores.models import StoreCustomer
     from django.db.models import Q
     filtro = Q()
     if order.customer_id:
         filtro |= Q(user_id=order.customer_id)
     if order.customer_phone:
-        filtro |= Q(phone=order.customer_phone)
+        # Variantes: o pedido e o cadastro gravam o telefone com e sem DDI.
+        variantes = phone_variants(order.customer_phone)
+        if variantes:
+            filtro |= Q(phone__in=variantes) | Q(whatsapp__in=variantes)
     if not filtro:
         return None
     return (
@@ -482,7 +510,7 @@ class ConsultaCnpjView(APIView):
         except ConsultaIndisponivel:
             return Response(
                 {'error': 'Consulta de CNPJ fora do ar. Preencha os dados à mão.'},
-                status=status.HTTP_502_BAD_GATEWAY,
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         if dados is None:
             return Response({'error': 'CNPJ não encontrado na Receita.'}, status=status.HTTP_404_NOT_FOUND)
