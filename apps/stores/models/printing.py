@@ -294,7 +294,22 @@ class StorePrintJob(BaseModel):
             'updated_at',
         ])
 
+    # Pode cancelar o que ainda não saiu (ou falhou de vez e alguém reimprimiria).
+    CANCELAVEIS = (JobStatus.PENDING, JobStatus.CLAIMED, JobStatus.FAILED)
+
+    def cancel(self, motivo: str = '') -> None:
+        """Fim da linha: nada a devolve para a fila (28/10, comanda em loop)."""
+        self.status = self.JobStatus.CANCELLED
+        if motivo:
+            self.last_error = motivo[:4000]
+        self.metadata = {**(self.metadata or {}), 'cancelado_em': timezone.now().isoformat()}
+        self.save(update_fields=['status', 'last_error', 'metadata', 'updated_at'])
+
     def fail(self, *, error_message: str, retryable: bool = True, retry_delay_seconds: int = 15) -> None:
+        if self.status == self.JobStatus.CANCELLED:
+            # O agent avisa a falha de um job que o painel já cancelou: se
+            # voltasse a pendente, a comanda cancelada imprimiria de novo.
+            return
         self.last_error = error_message[:4000]
         self.failed_at = timezone.now()
         if retryable and self.attempts < self.max_attempts:

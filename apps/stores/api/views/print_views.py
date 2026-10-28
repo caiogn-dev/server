@@ -353,6 +353,32 @@ class StorePrintJobViewSet(viewsets.ReadOnlyModelViewSet):
         )
         return Response({'job': StorePrintJobSerializer(job).data}, status=status.HTTP_201_CREATED)
 
+    @action(detail=True, methods=['post'], url_path='cancel')
+    def cancel(self, request, pk=None):
+        """Cancela um trabalho que ainda não imprimiu — o agent não pega mais."""
+        job = self.get_object()
+        if job.status not in StorePrintJob.CANCELAVEIS:
+            return Response({'detail': 'Este trabalho já foi impresso ou cancelado.'}, status=status.HTTP_400_BAD_REQUEST)
+        job.cancel(f'Cancelado no painel por {getattr(request.user, "username", "") or "?"}')
+        return Response(StorePrintJobSerializer(job).data)
+
+    @action(detail=False, methods=['post'], url_path='cancelar-fila')
+    def cancelar_fila(self, request):
+        """Limpa a fila da loja: tudo que espera ou está saindo vira cancelado."""
+        dados = request.data if hasattr(request.data, 'get') else {}
+        loja = str(dados.get('store') or '')
+        lojas = Store.objects.filter(id__in=accessible_store_ids(request.user))
+        store = (lojas.filter(pk=loja) if _uuid_valido(loja) else lojas.filter(slug=loja)).first() if loja else None
+        if not store:
+            return Response({'detail': 'Loja não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        jobs = list(StorePrintJob.objects.filter(
+            store=store, status__in=[StorePrintJob.JobStatus.PENDING, StorePrintJob.JobStatus.CLAIMED],
+        ))
+        motivo = f'Fila limpa no painel por {getattr(request.user, "username", "") or "?"}'
+        for job in jobs:
+            job.cancel(motivo)
+        return Response({'canceladas': len(jobs)})
+
     @action(detail=True, methods=['post'], url_path='requeue')
     def requeue(self, request, pk=None):
         job = self.get_object()

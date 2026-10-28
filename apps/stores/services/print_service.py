@@ -767,6 +767,11 @@ def complete_print_job(job: StorePrintJob, *, printer_name: str = '', metadata: 
     return job
 
 
+# O spooler do Windows mostra `Deleting`/`Deleted` quando alguém cancela o
+# trabalho na fila da impressora. O agent relata isso como falha comum.
+_CANCELADO_NO_WINDOWS = re.compile(r'status=[^,]*\b(Deleting|Deleted)\b', re.IGNORECASE)
+
+
 def fail_print_job(
     job: StorePrintJob,
     *,
@@ -774,6 +779,10 @@ def fail_print_job(
     retryable: bool = True,
     retry_delay_seconds: int = 15,
 ) -> StorePrintJob:
+    if _CANCELADO_NO_WINDOWS.search(error_message or '') and job.status != StorePrintJob.JobStatus.CANCELLED:
+        # Cancelado à mão na impressora: repetir era o loop de 28/10.
+        job.cancel(f'Cancelado na fila da impressora ({error_message[:200]})')
+        return job
     job.fail(
         error_message=error_message,
         retryable=retryable,
