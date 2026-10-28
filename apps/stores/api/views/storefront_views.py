@@ -1691,10 +1691,17 @@ class StoreCouponValidateView(APIView):
             customer_phone=(request.data.get('customer_phone') or '').strip() or None,
             items=CheckoutService._coupon_items(cart) if cart else None,
         )
+        # Banner de boas-vindas: some para quem já comprou, mesmo com o cupom
+        # ainda válido para ele (28/10, BEMVINDO10 da Cê em cliente antigo).
+        from apps.stores.models import StoreCoupon
+        cupom = StoreCoupon.objects.filter(store=store, code__iexact=code).first()
+        telefone = (request.data.get('customer_phone') or '').strip() or None
+        ja_comprou = bool(cupom and cupom.cliente_ja_comprou(user=request.user, customer_phone=telefone))
         if not resultado['valid']:
-            return Response({'valid': False, 'error': resultado['error']})
+            return Response({'valid': False, 'error': resultado['error'], 'ja_comprou': ja_comprou})
         return Response({
             'valid': True,
+            'ja_comprou': ja_comprou,
             'coupon': {
                 'code': resultado['code'],
                 'discount_type': resultado['discount_type'],
