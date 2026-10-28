@@ -172,3 +172,34 @@ class TestEdicao(ClienteBase):
         }, format='json')
         self.assertEqual(r2.status_code, 200, r2.content)
         self.assertEqual(r2.data['user_name'], 'FULANO ME')
+
+
+class TestTodoClienteTemIdentidade(ClienteBase):
+    """28/10: HOA foi criado minutos antes do deploy do fix e ficou órfão de
+    novo — a garantia morava no serializer da tela Clientes, e qualquer outro
+    caminho (PDV, checkout, bot, código antigo) seguia criando cliente que a
+    busca do novo pedido não enxerga. Agora mora no modelo."""
+
+    def _cliente_cru(self, telefone, nome='HOA', sobrenome='COMERCIO DE MOVEIS LTDA'):
+        u = User.objects.create_user(username=f'c{telefone}', email=f'{telefone}@x.invalid', password='x',
+                                     first_name=nome, last_name=sobrenome)
+        return StoreCustomer.objects.create(store=self.store, user=u, phone=telefone)
+
+    def test_cliente_criado_por_qualquer_caminho_ganha_identidade(self):
+        c = self._cliente_cru('61984319122')
+        c.refresh_from_db()
+        self.assertIsNotNone(c.unified_user_id)
+
+        achados = self.client.get(self.busca, {'q': 'HOA'}).json()
+        self.assertEqual([a['name'] for a in achados], ['HOA COMERCIO DE MOVEIS LTDA'])
+
+    def test_orfaos_antigos_sao_ligados(self):
+        from apps.stores.services.identidade_do_cliente import ligar_orfaos
+        c = self._cliente_cru('61984319122')
+        StoreCustomer.objects.filter(pk=c.pk).update(unified_user=None)
+
+        self.assertEqual(ligar_orfaos(), 1)
+
+        c.refresh_from_db()
+        self.assertIsNotNone(c.unified_user_id)
+        self.assertEqual(self.client.get(self.busca, {'q': 'HOA'}).json()[0]['name'], 'HOA COMERCIO DE MOVEIS LTDA')

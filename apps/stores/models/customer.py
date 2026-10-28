@@ -171,6 +171,10 @@ class StoreCustomer(BaseModel):
         else:
             self.phone = ''
         super().save(*args, **kwargs)
+        # Sem identidade o cliente não aparece na busca do novo pedido (HOA, 27–28/10).
+        if not self.unified_user_id and self.phone:
+            from apps.stores.services.identidade_do_cliente import ligar_identidade
+            ligar_identidade(self)
 
     def __str__(self):
         return f"{self.store.name} - {self.user.email}"
