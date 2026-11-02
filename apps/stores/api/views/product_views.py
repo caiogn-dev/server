@@ -8,7 +8,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from django.http import Http404
 
@@ -584,7 +584,9 @@ class StoreProductTypeViewSet(viewsets.ModelViewSet):
             wants_active = is_active_param.lower() in ('1', 'true', 'yes')
             queryset = queryset.filter(is_active=wants_active)
 
-        return queryset.select_related('store').order_by('sort_order', 'name')
+        return queryset.select_related('store').annotate(
+            anno_products_count=Count('products', filter=Q(products__status='active')),
+        ).order_by('sort_order', 'name')
 
 
 class StoreProductTypeAdminViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
@@ -600,7 +602,9 @@ class StoreProductTypeAdminViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         store_param = self.request.query_params.get('store')
         if store_param:
             qs, _ = filter_by_store(qs, store_param)
-        return qs.select_related('store').order_by('sort_order', 'name')
+        return qs.select_related('store').annotate(
+            anno_products_count=Count('products', filter=Q(products__status='active')),
+        ).order_by('sort_order', 'name')
 
 def _linhas_confirmadas(bruto) -> list:
     """`linhas` do corpo (lista, ou JSON em string no multipart) -> list[dict]."""
