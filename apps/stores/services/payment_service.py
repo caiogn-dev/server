@@ -159,7 +159,7 @@ class PaymentService:
             return payment
 
         except Exception as e:
-            self.logger.error(f"Error processing Mercado Pago payment: {e}")
+            self.logger.exception("Erro ao processar pagamento MP — payment_id %s", payment.payment_id)
             payment.status = StorePayment.PaymentStatus.FAILED
             payment.error_code = "mp_error"
             payment.error_message = str(e)
@@ -288,8 +288,8 @@ class PaymentService:
             if refund_response["status"] not in [200, 201]:
                 raise Exception(f"Refund failed: {refund_response}")
 
-        except Exception as e:
-            self.logger.error(f"Error processing Mercado Pago refund: {e}")
+        except Exception:
+            self.logger.exception("Erro ao realizar estorno MP — payment_id %s", payment.payment_id)
             raise
 
     def list_order_payments(self, order_id: str) -> List[StorePayment]:
