@@ -13,16 +13,20 @@ User = get_user_model()
 
 
 class ProductTypeQueryCountTest(APITestCase):
+    _seq = 0
+
     def _setup(self, n):
-        self.owner = User.objects.create_user(username=f'o{n}', password='x')
-        self.store = Store.objects.create(name='L', slug=f'l{n}', owner=self.owner, status='active')
+        ProductTypeQueryCountTest._seq += 1
+        k = ProductTypeQueryCountTest._seq
+        self.owner = User.objects.create_user(username=f'o{k}', password='x')
+        self.store = Store.objects.create(name='L', slug=f'l{k}', owner=self.owner, status='active')
         self.types = []
         for i in range(n):
             t = StoreProductType.objects.create(store=self.store, name=f'T{i}', slug=f't{i}')
             for j in range(2):
-                StoreProduct.objects.create(store=self.store, name=f'P{i}{j}', price=Decimal('10'),
+                StoreProduct.objects.create(store=self.store, name=f'P{i}{j}', slug=f'p{i}-{j}', price=Decimal('10'),
                                             product_type=t, status='active')
-            StoreProduct.objects.create(store=self.store, name=f'X{i}', price=Decimal('10'),
+            StoreProduct.objects.create(store=self.store, name=f'X{i}', slug=f'x{i}', price=Decimal('10'),
                                         product_type=t, status='draft')
         self.client.force_authenticate(self.owner)
 
