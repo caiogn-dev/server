@@ -51,22 +51,26 @@ def telefone_valido(telefone: str) -> str:
 def convidar(store, *, telefone: str = '', nome: str = '', usuario=None,
              papel: str = StoreTeamMember.Role.OPERATOR, convidado_por=None,
              senha: str = ''):
-    """Põe alguém na equipe da loja. Devolve (membro, criado).
+    """Põe alguém na equipe da loja. Devolve (membro, criado, senha_definida).
 
     Reconvidar não é erro: `unique_together` é (tenant, user) e DELETE é soft
     delete, então convidar de volta quem saiu tem que REATIVAR em vez de
     estourar IntegrityError. Reconvidar quem já está dentro atualiza o papel —
     é o que o dono espera de um formulário que ele preencheu de novo.
+
+    Devolve também se a senha foi definida. A senha só vale para a conta que
+    nasceu neste convite: quem já existe pode ser dono de outra loja ou cliente,
+    e trocar a senha entregaria a conta dessa pessoa a quem convidou.
     """
+    conta_nova = False
     if usuario is None:
         telefone = telefone_valido(telefone)
-        usuario, _perfil, _criado = CustomerIdentityService.resolve_user(
+        usuario, _perfil, conta_nova = CustomerIdentityService.resolve_user(
             phone=telefone, full_name=nome, create=True,
         )
 
-    if senha:
-        # Entrada no painel: celular + esta senha. Trocar a senha de quem já
-        # tem uma é decisão do dono que preencheu o campo de novo.
+    senha_definida = bool(senha and conta_nova)
+    if senha_definida:
         usuario.set_password(senha)
         usuario.save(update_fields=['password'])
     membro, criado = StoreTeamMember.objects.get_or_create(
@@ -87,4 +91,4 @@ def convidar(store, *, telefone: str = '', nome: str = '', usuario=None,
             '[equipe] Membro reconvidado em %s: user=%s papel=%s',
             store.slug, usuario.pk, papel,
         )
-    return membro, criado
+    return membro, criado, senha_definida

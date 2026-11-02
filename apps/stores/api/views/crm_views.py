@@ -266,7 +266,7 @@ class TeamMemberViewSet(viewsets.ModelViewSet):
             usuario = User.objects.filter(pk=dados['user_id']).first()
 
         try:
-            membro, criado = servico_de_equipe.convidar(
+            membro, criado, senha_definida = servico_de_equipe.convidar(
                 store,
                 telefone=dados.get('phone', ''),
                 nome=dados.get('name', ''),
@@ -278,8 +278,8 @@ class TeamMemberViewSet(viewsets.ModelViewSet):
         except DjangoValidationError as exc:
             raise serializers.ValidationError({'phone': list(exc.messages)})
 
-        saida = TeamMemberSerializer(membro)
-        return Response(saida.data, status=201 if criado else 200)
+        saida = {**TeamMemberSerializer(membro).data, 'senha_definida': senha_definida}
+        return Response(saida, status=201 if criado else 200)
 
     def perform_update(self, serializer):
         store = self._get_store()

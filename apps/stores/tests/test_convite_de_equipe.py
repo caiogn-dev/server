@@ -142,3 +142,68 @@ class ColaboradorEntraNoPainelTests(APITestCase):
     def test_a_senha_nao_volta_na_resposta(self):
         r = self._convidar(phone='63 98888-0005', role='operator', password='segredo1')
         self.assertNotIn('segredo1', str(r.data))
+
+
+class ConviteNaoTrocaSenhaDeContaExistenteTests(APITestCase):
+    """Convite define senha só de quem nasceu nele.
+
+    Até 02/11 o dono da loja A mandava o telefone do dono da loja B (ou de
+    qualquer cliente) com uma senha no convite, e a conta passava a ser dele.
+    """
+
+    SENHA_ORIGINAL = 'senha-original-1'
+    SENHA_DO_ATACANTE = 'senha-do-atacante'
+
+    def setUp(self):
+        self.atacante = User.objects.create_user(username='dono-a', password='x', email='a@real.com')
+        self.loja_a = Store.objects.create(name='Loja A', slug='loja-a', owner=self.atacante, status='active')
+        self.vitima = User.objects.create_user(
+            username='dono-b', password=self.SENHA_ORIGINAL, email='b@real.com',
+        )
+        UserProfile.objects.update_or_create(user=self.vitima, defaults={'phone': '5563977770001'})
+        self.client.force_authenticate(user=self.atacante)
+
+    def _convidar(self, **corpo):
+        return self.client.post(f'/api/v1/stores/{self.loja_a.slug}/team/', corpo, format='json')
+
+    def _senha_intacta(self, usuario=None):
+        usuario = usuario or self.vitima
+        usuario.refresh_from_db()
+        self.assertTrue(usuario.check_password(self.SENHA_ORIGINAL), 'a senha da conta foi trocada')
+        self.assertFalse(usuario.check_password(self.SENHA_DO_ATACANTE))
+
+    def test_pelo_telefone_nao_troca_a_senha_e_a_tela_fica_sabendo(self):
+        r = self._convidar(phone='63 97777-0001', role='operator', password=self.SENHA_DO_ATACANTE)
+
+        self.assertIn(r.status_code, (200, 201), r.data)
+        self.assertIs(r.data['senha_definida'], False)
+        self._senha_intacta()
+        self.assertTrue(StoreTeamMember.objects.filter(tenant=self.loja_a, user=self.vitima).exists())
+
+    def test_pelo_user_id_nao_troca_a_senha(self):
+        r = self._convidar(user_id=self.vitima.pk, role='operator', password=self.SENHA_DO_ATACANTE)
+
+        self.assertIn(r.status_code, (200, 201), r.data)
+        self.assertIs(r.data['senha_definida'], False)
+        self._senha_intacta()
+
+    def test_superusuario_nao_tem_a_senha_trocada(self):
+        admin = User.objects.create_superuser(
+            username='admin-x', password=self.SENHA_ORIGINAL, email='adm@real.com',
+        )
+        self._convidar(user_id=admin.pk, role='operator', password=self.SENHA_DO_ATACANTE)
+        self._senha_intacta(admin)
+
+    def test_convidar_em_duas_etapas_nao_abre_o_caminho(self):
+        """Primeiro entra na equipe sem senha, depois tenta definir a senha."""
+        self._convidar(phone='63 97777-0001', role='operator')
+        self._convidar(phone='63 97777-0001', role='operator', password=self.SENHA_DO_ATACANTE)
+        self._senha_intacta()
+
+    def test_pessoa_nova_continua_recebendo_a_senha(self):
+        r = self._convidar(phone='63 97777-0002', name='Nova', role='operator', password='segredo1')
+
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertIs(r.data['senha_definida'], True)
+        membro = StoreTeamMember.objects.get(tenant=self.loja_a, user__profile__phone__contains='63977770002')
+        self.assertTrue(membro.user.check_password('segredo1'))
