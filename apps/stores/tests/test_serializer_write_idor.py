@@ -209,7 +209,9 @@ class OrderCreateResolveStoreIsStaffIDORTest(SimpleTestCase):
         store_uuid = str(store.id)
         validated_data = {'store': store_uuid}
 
-        with patch('apps.stores.models.Store.objects') as mock_mgr:
+        with patch('apps.stores.models.Store.objects') as mock_mgr, \
+                patch('apps.stores.models.StoreTeamMember.objects') as mock_equipe:
+            mock_equipe.filter.return_value.first.return_value = None
             mock_mgr.filter.return_value.first.return_value = store
             try:
                 uuid.UUID(store_uuid)

@@ -12,7 +12,7 @@ import pytest
 from django.contrib.auth import get_user_model
 
 from apps.stores.models import Store, StoreTeamMember
-from apps.stores.permissions import get_member_role, lojas_com_permissao
+from apps.stores.permissions import get_member_role, has_store_permission, lojas_com_permissao
 
 User = get_user_model()
 
@@ -46,6 +46,15 @@ def test_quem_entra_por_acao(pessoas, acao, entram):
     loja, gente = pessoas
     quem = {nome for nome, u in gente.items() if loja.id in set(lojas_com_permissao(u, acao))}
     assert quem == entram
+
+
+@pytest.mark.parametrize('acao', ['whatsapp', 'reports', 'orders', 'catalog'])
+def test_as_duas_portas_dao_a_mesma_resposta(pessoas, acao):
+    """Listar a loja e abrir a loja não podem discordar sobre quem entra."""
+    loja, gente = pessoas
+    for nome, u in gente.items():
+        na_lista = loja.id in set(lojas_com_permissao(u, acao))
+        assert has_store_permission(u, loja, acao) == na_lista, (nome, acao)
 
 
 def test_staff_legado_vale_como_gerente(pessoas):

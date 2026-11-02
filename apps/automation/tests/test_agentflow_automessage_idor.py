@@ -153,4 +153,4 @@ class AutoMessageViewSetIsStaffTest(SimpleTestCase):
         from apps.automation.api.views import auto_message_views as mod
         src = inspect.getsource(mod.AutoMessageViewSet.create)
         self.assertNotIn('is_superuser', src)
-        self.assertIn('store__owner=request.user', src)
+        self.assertIn('lojas_com_permissao(request.user', src)

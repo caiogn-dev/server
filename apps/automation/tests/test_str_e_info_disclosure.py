@@ -66,7 +66,8 @@ class UnifiedViewStrELeakTest(SimpleTestCase):
 
         internal_error = "LLM API error: api_key=sk-secret-key-12345 (dado sensível)"
 
-        with patch('apps.automation.api.views.unified_views.WhatsAppAccount') as mock_wa, \
+        with patch('apps.automation.api.views.unified_views.lojas_com_permissao', return_value=[]), \
+                patch('apps.automation.api.views.unified_views.WhatsAppAccount') as mock_wa, \
                 patch('apps.automation.api.views.unified_views.Conversation') as mock_conv, \
                 patch('apps.automation.api.views.unified_views.LLMOrchestratorService') as mock_svc:
             qs = MagicMock()
