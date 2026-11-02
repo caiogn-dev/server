@@ -147,6 +147,16 @@ class NfePayloadTests(APITestCase):
     def test_sem_ie_o_destinatario_e_nao_contribuinte(self):
         self.assertEqual(self._payload()['indicador_inscricao_estadual_destinatario'], '9')
 
+    def test_ie_isento_vai_como_contribuinte_isento(self):
+        """HOA (28/10): empresa isenta de IE. Sem como dizer "isento", saía
+        como não contribuinte (9) e a SEFAZ pediu a IE."""
+        for escrito in ('ISENTO', 'isento', ' Isento '):
+            self.order.metadata = {'cpf_nota': CNPJ_CLIENTE, 'ie_nota': escrito}
+            self.order.save(update_fields=['metadata'])
+            payload = self._payload()
+            self.assertEqual(payload['indicador_inscricao_estadual_destinatario'], '2')
+            self.assertNotIn('inscricao_estadual_destinatario', payload)
+
     def test_frete_e_desconto_continuam_fechando_a_conta(self):
         self.order.delivery_fee = Decimal('30.00')
         self.order.discount = Decimal('20.00')

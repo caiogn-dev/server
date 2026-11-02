@@ -398,7 +398,7 @@ class EnviarNotaPorEmailTests(APITestCase):
     def test_falha_do_provedor_de_email_vira_erro_e_nao_marca_enviado(self):
         with self._baixa(), self._envio(sucesso=False):
             resp = self.client.post(self.url, {'email': 'a@b.org'}, format='json')
-        self.assertEqual(resp.status_code, 502)
+        self.assertEqual(resp.status_code, 503)
         self.doc.refresh_from_db()
         self.assertEqual(self.doc.email_enviado_para, '')
 

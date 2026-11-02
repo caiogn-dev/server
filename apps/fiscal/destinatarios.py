@@ -1,7 +1,7 @@
 """Destinatário da nota: validar, guardar e carimbar no pedido."""
 import uuid
 
-from .documents import classificar, limpar
+from .documents import classificar, limpar, limpar_ie
 from .models import DestinatarioFiscal, FiscalDocument
 from .services import CAMPOS_ENDERECO
 
@@ -54,7 +54,7 @@ def normalizar(dados: dict, modelo: str = FiscalDocument.Modelo.NFE) -> dict:
     return {
         'documento': documento,
         'nome': nome,
-        'inscricao_estadual': limpar(str(dados.get('inscricao_estadual') or ''))[:20],
+        'inscricao_estadual': limpar_ie(dados.get('inscricao_estadual'))[:20],
         'email': _texto(dados.get('email'), 254),
         'telefone': limpar(str(dados.get('telefone') or ''))[:20],
         'endereco': endereco,
@@ -88,6 +88,42 @@ def como_dict(destinatario: DestinatarioFiscal) -> dict:
         'telefone': destinatario.telefone,
         'customer_id': str(destinatario.customer_id) if destinatario.customer_id else None,
         'endereco': {campo: getattr(destinatario, campo) for campo in CAMPOS_DO_ENDERECO},
+    }
+
+
+def endereco_do_cliente(customer) -> dict:
+    """Endereço principal do cadastro do cliente, no formato da nota."""
+    bruto = (customer.get_default_address() if customer is not None else None) or {}
+    return {campo: str(bruto.get(campo) or '') for campo in CAMPOS_DO_ENDERECO}
+
+
+def completar_endereco(endereco: dict, customer) -> dict:
+    """Endereço sem rua (retirada, cadastro antigo) cai no do cadastro do cliente."""
+    endereco = {campo: str((endereco or {}).get(campo) or '') for campo in CAMPOS_DO_ENDERECO}
+    if endereco['street'] or customer is None:
+        return endereco
+    do_cadastro = endereco_do_cliente(customer)
+    return do_cadastro if do_cadastro['street'] else endereco
+
+
+def do_cliente(customer) -> dict:
+    """Cliente com CPF/CNPJ no cadastro, no formato de destinatário salvo.
+
+    Antes a lista de salvos só tinha quem já recebeu nota — o cliente PJ
+    cadastrado com tudo preenchido não aparecia (28/10).
+    """
+    nome = customer.razao_social or customer.nome_fantasia
+    if not nome and customer.user_id:
+        nome = customer.user.get_full_name()
+    return {
+        'id': f'cliente:{customer.id}',
+        'documento': customer.documento,
+        'nome': nome or '',
+        'inscricao_estadual': customer.inscricao_estadual,
+        'email': customer.email,
+        'telefone': customer.phone,
+        'customer_id': str(customer.id),
+        'endereco': endereco_do_cliente(customer),
     }
 
 

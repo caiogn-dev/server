@@ -3,7 +3,7 @@ import logging
 import re
 from decimal import Decimal
 
-from .documents import classificar
+from .documents import ISENTO, classificar, limpar_ie
 from .models import FiscalDocument
 from .providers.base import FiscalNotConfigured, FiscalProvider
 from .providers.focus import FocusProvider
@@ -350,7 +350,8 @@ def build_nfe_payload(order, config: dict) -> dict:
     interestadual = bool(uf_emitente) and uf_destino != uf_emitente
     cfop = CFOP_INTERESTADUAL if interestadual else (config.get('cfop_padrao') or DEFAULT_CFOP)
 
-    inscricao = _digits(destinatario['inscricao_estadual'])
+    inscricao = limpar_ie(destinatario['inscricao_estadual'])
+    isento = inscricao == ISENTO
 
     payload = {
         **emitente,
@@ -372,11 +373,12 @@ def build_nfe_payload(order, config: dict) -> dict:
         'municipio_destinatario': str(endereco['city']).strip(),
         'uf_destinatario': uf_destino,
         'cep_destinatario': _digits(str(endereco['zip_code'])),
-        # 1 = contribuinte com IE; 9 = não contribuinte. Mandar 1 sem IE é
-        # rejeição certa, então o indicador segue o dado que existe.
-        'indicador_inscricao_estadual_destinatario': '1' if inscricao else '9',
+        # 1 = contribuinte com IE; 2 = contribuinte isento; 9 = não
+        # contribuinte. Mandar 1 sem IE é rejeição certa, então o indicador
+        # segue o dado que existe.
+        'indicador_inscricao_estadual_destinatario': '2' if isento else ('1' if inscricao else '9'),
     }
-    if inscricao:
+    if inscricao and not isento:
         payload['inscricao_estadual_destinatario'] = inscricao
     if str(endereco.get('complement') or '').strip():
         payload['complemento_destinatario'] = str(endereco['complement']).strip()
