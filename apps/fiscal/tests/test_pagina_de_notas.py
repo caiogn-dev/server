@@ -508,3 +508,31 @@ class EnvioQuandoASefazDemoraTests(APITestCase):
         mock_consult.return_value = EmitResult(status='rejected', error_message='x')
         self.client.get(f'{self.base}/notas/')
         mock_envio.assert_not_called()
+
+
+class SugestaoPeloCadastroDoClienteTests(APITestCase):
+    """Cliente PJ cadastrado com CNPJ/razão social/IE (27/10): a nota sugere
+    os dados do cadastro em vez de pedir para redigitar a cada pedido."""
+
+    def setUp(self):
+        from apps.stores.models import StoreCustomer
+        self.owner = User.objects.create_user(username='dono-cad', email='c@t.com', password='x')
+        self.store = _loja('loja-cad', self.owner)
+        cliente_user = User.objects.create_user(username='cliente_5561984319122', password='x')
+        StoreCustomer.objects.create(
+            store=self.store, user=cliente_user, phone='5561984319122',
+            tipo_pessoa='pj', documento=CNPJ_CLIENTE,
+            razao_social='HOA COMERCIO DE MOVEIS LTDA', nome_fantasia='HOA Móveis',
+            inscricao_estadual='291234567', email='compras@hoa.com.br',
+        )
+        self.order = _pedido(self.store, customer=cliente_user, customer_name='HOA Móveis',
+                             customer_phone='5561984319122')
+        self.client.force_authenticate(self.owner)
+
+    def test_sugestao_vem_do_cadastro_pj(self):
+        resp = self.client.get(f'/api/v1/stores/{self.store.slug}/fiscal/pedidos/')
+        sug = {p['id']: p for p in resp.data}[str(self.order.id)]['sugestao']
+        self.assertEqual(sug['documento'], CNPJ_CLIENTE)
+        self.assertEqual(sug['nome'], 'HOA COMERCIO DE MOVEIS LTDA')
+        self.assertEqual(sug['inscricao_estadual'], '291234567')
+        self.assertEqual(sug['email'], 'compras@hoa.com.br')

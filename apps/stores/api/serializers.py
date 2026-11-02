@@ -1140,10 +1140,18 @@ class StorePrintJobSerializer(serializers.ModelSerializer):
 class StoreOrderCreateItemSerializer(serializers.Serializer):
     """Line item payload for order creation."""
 
-    product_id = serializers.UUIDField()
+    # Produto OU combo (28/10): o painel não tinha como lançar combo no balcão.
+    product_id = serializers.UUIDField(required=False)
+    combo_id = serializers.UUIDField(required=False)
+    selections = serializers.DictField(required=False, default=dict)
     quantity = serializers.IntegerField(min_value=1)
     options = serializers.DictField(required=False, default=dict)
     notes = serializers.CharField(required=False, allow_blank=True, default='')
+
+    def validate(self, attrs):
+        if bool(attrs.get('product_id')) == bool(attrs.get('combo_id')):
+            raise serializers.ValidationError('Cada item é um produto ou um combo.')
+        return attrs
 
 
 class StoreOrderCreateSerializer(serializers.Serializer):
@@ -1176,6 +1184,11 @@ class StoreOrderCreateSerializer(serializers.Serializer):
 
     payment_method = serializers.CharField(required=False, allow_blank=True)
     coupon_code = serializers.CharField(required=False, allow_blank=True)
+    # Dinheiro: troco para quanto (0 = não precisa). Vale na entrega: bandeira.
+    change_for = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=False, allow_null=True, min_value=Decimal('0.00'),
+    )
+    voucher_brand = serializers.CharField(required=False, allow_blank=True, max_length=30)
     discount = serializers.DecimalField(
         max_digits=10,
         decimal_places=2,
@@ -1243,6 +1256,42 @@ class StoreOrderCreateSerializer(serializers.Serializer):
 
         return store
 
+    def _resolver_combo(self, store, item, idx):
+        """Combo do painel: valida as escolhas e o estoque como o checkout."""
+        from apps.stores.models import StoreCartComboItem, StoreCombo
+        from apps.stores.services import estoque_das_escolhas
+        from apps.stores.validators import ComboSelectionValidator
+
+        combo = StoreCombo.objects.filter(id=item['combo_id'], store=store, is_active=True).first()
+        if not combo:
+            raise serializers.ValidationError({'items': f'Combo não encontrado no item {idx + 1}'})
+        selections = item.get('selections') or {}
+        validador = ComboSelectionValidator(combo)
+        if not validador.validate(selections):
+            raise serializers.ValidationError({'items': f'{combo.name}: ' + ' '.join(validador.errors)})
+        quantity = item.get('quantity', 1)
+        try:
+            estoque_das_escolhas.validar_disponivel(selections, quantity)
+        except ValueError as e:
+            raise serializers.ValidationError({'items': f'{combo.name}: {e}'})
+        if combo.track_stock and combo.stock_quantity < quantity:
+            raise serializers.ValidationError({'items': f'{combo.name} esgotado.'})
+        unit_price = combo.compute_unit_price(selections)
+        return {
+            'combo': combo,
+            'selections': selections,
+            'quantity': quantity,
+            'unit_price': unit_price,
+            'subtotal': unit_price * quantity,
+            'notes': item.get('notes', ''),
+            # Não salvo: só para reaproveitar o snapshot das escolhas do checkout.
+            'carrinho': StoreCartComboItem(combo=combo, group_selections=selections,
+                                           customizations={'selections': selections}),
+        }
+
+    # O decorador é DO create (o select_for_update do estoque exige transação).
+    # 28/10: um método inserido entre os dois roubou o decorador e todo pedido
+    # do painel deu 500 em produção.
     @transaction.atomic
     def create(self, validated_data):
         store = self._resolve_store(validated_data)
@@ -1266,7 +1315,14 @@ class StoreOrderCreateSerializer(serializers.Serializer):
         subtotal = Decimal('0.00')
         resolved_items = []
 
+        resolved_combos = []
+
         for idx, item in enumerate(items_data):
+            if item.get('combo_id'):
+                combo_linha = self._resolver_combo(store, item, idx)
+                subtotal += combo_linha['subtotal']
+                resolved_combos.append(combo_linha)
+                continue
             product = StoreProduct.objects.filter(
                 id=item['product_id'],
                 store=store,
@@ -1311,6 +1367,25 @@ class StoreOrderCreateSerializer(serializers.Serializer):
         except (ValueError, InvalidOperation):
             surcharge = Decimal('0.00')
 
+        # Cupom (28/10): era gravado cru — sem conferir validade nem descontar.
+        # Mesma conta do checkout; soma ao desconto manual do atendente.
+        cupom = None
+        codigo_do_cupom = (validated_data.get('coupon_code') or '').strip()
+        if codigo_do_cupom:
+            from apps.stores.models import StoreCoupon
+            from apps.stores.services.checkout_service import CheckoutService
+            v = CheckoutService.validate_coupon(
+                store, codigo_do_cupom, subtotal, customer_phone=validated_data.get('customer_phone'),
+            )
+            if not v.get('valid'):
+                raise serializers.ValidationError({'coupon_code': v.get('error') or 'Cupom inválido.'})
+            cupom = StoreCoupon.objects.get(id=v['coupon_id'])
+            # Reserva a vaga como o checkout (atômico; reverte com o pedido).
+            if not cupom.increment_usage():
+                raise serializers.ValidationError({'coupon_code': 'Este cupom esgotou.'})
+            validated_data['coupon_code'] = v['code']
+            discount += Decimal(str(v['discount'])).quantize(Decimal('0.01'))
+
         tax = Decimal('0.00')
         total = subtotal - discount + tax + delivery_fee + surcharge
         if total < Decimal('0.00'):
@@ -1336,6 +1411,9 @@ class StoreOrderCreateSerializer(serializers.Serializer):
             metadata['source'] = canal
         if validated_data.get('suppress_notifications'):
             metadata['suppress_notifications'] = True
+        bandeira = (validated_data.get('voucher_brand') or '').strip().lower()
+        if bandeira and validated_data.get('payment_method') == 'voucher_on_delivery':
+            metadata['voucher_brand'] = bandeira
         adjustment_reason = (validated_data.get('adjustment_reason') or '').strip()
         if 'delivery_fee' in validated_data:
             metadata['manual_delivery_fee'] = {
@@ -1398,6 +1476,8 @@ class StoreOrderCreateSerializer(serializers.Serializer):
             surcharge_reason=adjustment_reason[:255] if surcharge > 0 else '',
             total=total,
             payment_method=validated_data.get('payment_method', ''),
+            change_for=(validated_data.get('change_for')
+                        if validated_data.get('payment_method') == 'cash' else None),
             delivery_method=validated_data.get('delivery_method', 'delivery'),
             delivery_address=delivery_address,
             delivery_notes=validated_data.get('delivery_notes', ''),
@@ -1409,6 +1489,10 @@ class StoreOrderCreateSerializer(serializers.Serializer):
             # Ninguém gravava — 51 pedidos de PDV da Cê em 30 dias sem dono (22/10).
             created_by_staff=request.user if request and request.user.is_authenticated else None,
         )
+
+        if cupom is not None:
+            from apps.stores.services.checkout_service import CheckoutService
+            CheckoutService.record_coupon_redemption(order, cupom)
 
         # Trava e valida o estoque ANTES de decrementar. Este caminho (PDV/painel)
         # só tinha copiado o UPDATE com F() do storefront, não a validação com
@@ -1459,6 +1543,42 @@ class StoreOrderCreateSerializer(serializers.Serializer):
                     sold_count=F('sold_count') + item['quantity'],
                 )
                 stock_changed = True
+
+        # Combos: mesma gravação do checkout (linha vendável + escolhas) e
+        # cada sabor escolhido sai do estoque dele.
+        if resolved_combos:
+            from django.db.models import F
+            from apps.stores.models import StoreCombo, StoreOrderComboItem
+            from apps.stores.services import estoque_das_escolhas
+            from apps.stores.services.checkout_service import CheckoutService
+            for c in resolved_combos:
+                combo = c['combo']
+                order_item = StoreOrderItem.objects.create(
+                    order=order, product=None, variant=None,
+                    product_name=f"Combo: {combo.name}", variant_name='', sku='',
+                    unit_price=c['unit_price'], quantity=c['quantity'], subtotal=c['subtotal'],
+                    options={'selections': c['selections']}, notes=c['notes'],
+                )
+                snapshot = CheckoutService.build_combo_selection_snapshot(c['carrinho'])
+                order_combo = StoreOrderComboItem.objects.create(
+                    order=order, order_item=order_item, combo=combo, quantity=c['quantity'],
+                    group_selections=snapshot['group_selections'],
+                    selected_variant_ids=snapshot['selected_variant_ids'],
+                    selected_variants_data=snapshot['selected_variants_data'],
+                    display_data={
+                        'combo_name': combo.name,
+                        'unit_price': str(c['unit_price']),
+                        'customizations': {'selections': c['selections']},
+                        'groups': snapshot['display_groups'],
+                        estoque_das_escolhas.MARCA: True,
+                    },
+                )
+                if estoque_das_escolhas.baixar(order_combo):
+                    stock_changed = True
+                if combo.track_stock:
+                    StoreCombo.objects.filter(id=combo.id).update(
+                        stock_quantity=F('stock_quantity') - c['quantity']
+                    )
 
         if stock_changed:
             from apps.stores.services.checkout_service import _invalidate_agent_menu_safe
@@ -1619,6 +1739,29 @@ class StoreCustomerAddressSerializer(serializers.ModelSerializer):
         ]
 
 
+def nome_de_exibicao(customer) -> str:
+    """Empresa: nome fantasia, senão razão social. Pessoa física: '' (usa o
+    nome do cadastro)."""
+    if customer.tipo_pessoa == StoreCustomer.TipoPessoa.JURIDICA:
+        return (customer.nome_fantasia or customer.razao_social or '').strip()
+    return ''
+
+
+def nome_de_exibicao_dos_dados(dados: dict) -> str:
+    if dados.get('tipo_pessoa') == StoreCustomer.TipoPessoa.JURIDICA:
+        return (dados.get('nome_fantasia') or dados.get('razao_social') or '').strip()
+    return ''
+
+
+def ClienteJaCadastrado(cliente):
+    from apps.core.exceptions import ConflictError
+    return ConflictError(
+        'Já existe um cliente com este telefone nesta loja.',
+        code='cliente_existente',
+        details={'cliente_id': str(cliente.id)},
+    )
+
+
 class StoreCustomerSerializer(serializers.ModelSerializer):
     """Serializer do StoreCustomer. `name` é gravável e resolve o auth.User."""
 
@@ -1627,12 +1770,15 @@ class StoreCustomerSerializer(serializers.ModelSerializer):
     default_address = serializers.SerializerMethodField()
     name = serializers.CharField(write_only=True, required=False, allow_blank=True)
     address_list = StoreCustomerAddressSerializer(many=True, required=False)
+    # Aceita com máscara ("11.222.333/0001-81"); o validate guarda só dígitos.
+    documento = serializers.CharField(required=False, allow_blank=True, max_length=20)
 
     class Meta:
         model = StoreCustomer
         fields = [
             'id', 'store', 'user', 'user_email', 'user_name', 'name',
-            'phone', 'whatsapp',
+            'phone', 'whatsapp', 'email',
+            'tipo_pessoa', 'documento', 'razao_social', 'nome_fantasia', 'inscricao_estadual',
             'instagram', 'twitter', 'facebook',
             'addresses', 'default_address_index', 'default_address',
             'address_list',
@@ -1695,6 +1841,10 @@ class StoreCustomerSerializer(serializers.ModelSerializer):
         return 'novo'
 
     def get_user_name(self, obj):
+        if obj.tipo_pessoa == StoreCustomer.TipoPessoa.JURIDICA:
+            exibicao = nome_de_exibicao(obj)
+            if exibicao:
+                return exibicao
         full = f"{obj.user.first_name} {obj.user.last_name}".strip()
         # Rede de segurança: nunca expõe placeholder ("Desconhecido"). Cai no
         # telefone (a UI mostra o número), como manda o CLAUDE.md.
@@ -1727,49 +1877,99 @@ class StoreCustomerSerializer(serializers.ModelSerializer):
             if old_id not in incoming_ids:
                 obj.delete()
 
+    def validate(self, attrs):
+        from apps.fiscal.documents import cnpj_valido, cpf_valido, limpar
+        inst = self.instance
+        tipo = attrs.get('tipo_pessoa') or (inst.tipo_pessoa if inst else StoreCustomer.TipoPessoa.FISICA)
+        erros = {}
+        if 'documento' in attrs:
+            doc = limpar(attrs['documento'])
+            attrs['documento'] = doc
+            if doc:
+                if tipo == StoreCustomer.TipoPessoa.JURIDICA and not cnpj_valido(doc):
+                    erros['documento'] = 'CNPJ inválido — confira o número.'
+                elif tipo == StoreCustomer.TipoPessoa.FISICA and not cpf_valido(doc):
+                    erros['documento'] = 'CPF inválido — confira o número.'
+        if tipo == StoreCustomer.TipoPessoa.JURIDICA:
+            razao = attrs.get('razao_social', inst.razao_social if inst else '')
+            if not (razao or '').strip():
+                erros['razao_social'] = 'Informe a razão social.'
+        if erros:
+            raise serializers.ValidationError(erros)
+        return attrs
+
+    @staticmethod
+    def _gravar_nome(user, customer, name):
+        """Empresa não é partida em nome/sobrenome ("HOA" / "COMERCIO DE
+        MOVEIS LTDA"); pessoa física segue o split de sempre."""
+        if customer.tipo_pessoa == StoreCustomer.TipoPessoa.JURIDICA:
+            user.first_name, user.last_name = nome_de_exibicao(customer)[:150], ''
+        elif name is not None:
+            user.first_name, user.last_name = CustomerIdentityService.split_name(name)
+        else:
+            return
+        user.save(update_fields=['first_name', 'last_name'])
+
+    @staticmethod
+    def _ligar_identidade(customer):
+        """Liga o cadastro da loja à identidade que a busca do novo pedido lê.
+
+        Sem isto o cliente criado aqui não aparecia no novo pedido até o
+        primeiro pedido pelo checkout (HOA COMERCIO, 27/10).
+        """
+        from apps.users.models import UnifiedUser
+        nome = nome_de_exibicao(customer) or f"{customer.user.first_name} {customer.user.last_name}".strip()
+        uu = customer.unified_user
+        if uu is None and customer.phone:
+            try:
+                uu, _ = UnifiedUser.resolve(phone=customer.phone, name=nome, django_user=customer.user)
+            except ValueError:
+                return
+            customer.unified_user = uu
+            customer.save(update_fields=['unified_user'])
+        if uu is not None and nome and uu.name != nome:
+            uu.name = nome
+            uu.save(update_fields=['name'])
+
     def create(self, validated_data):
+        from apps.core.utils import normalize_phone_number
         address_list = validated_data.pop('address_list', None)
         name = validated_data.pop('name', '')
         store = validated_data.get('store')
         phone = validated_data.get('phone', '') or validated_data.get('whatsapp', '')
+        # Telefone já cadastrado NESTA loja: apontar o cadastro, não
+        # sobrescrever. Antes o get_or_create devolvia o antigo, renomeava a
+        # pessoa, apagava os endereços dela e a tela dizia "Cliente criado".
+        if phone and store is not None:
+            normal = normalize_phone_number(phone) or phone
+            existente = StoreCustomer.objects.filter(store=store, phone__in={normal, phone}).first()
+            if existente is not None:
+                raise ClienteJaCadastrado(existente)
         with transaction.atomic():
-            # Reusa CustomerIdentityService para criar User interno com padrão
-            # consistente (username único, email @pastita.local) — CLAUDE.md
             user, _profile, _created = CustomerIdentityService.resolve_user(
                 phone=phone or '',
-                full_name=name or '',
+                full_name=name or nome_de_exibicao_dos_dados(validated_data),
                 create=True,
             )
             validated_data['user'] = user
-            # M-4: unique_together(store, user) — get_or_create evita IntegrityError
-            # (500) quando o mesmo cliente é enviado duas vezes pelo dashboard.
-            customer, _created = StoreCustomer.objects.get_or_create(
-                store=store,
-                user=user,
-                defaults=validated_data,
-            )
+            existente = StoreCustomer.objects.filter(store=store, user=user).first()
+            if existente is not None:
+                raise ClienteJaCadastrado(existente)
+            customer = StoreCustomer.objects.create(**validated_data)
+            self._gravar_nome(user, customer, None)
             if address_list is not None:
                 self._sync_address_list(customer, address_list)
+            self._ligar_identidade(customer)
             return customer
 
     def update(self, instance, validated_data):
         address_list = validated_data.pop('address_list', None)
         name = validated_data.pop('name', None)
         with transaction.atomic():
-            if name is not None:
-                first, last = CustomerIdentityService.split_name(name)
-                instance.user.first_name = first
-                instance.user.last_name = last
-                instance.user.save(update_fields=['first_name', 'last_name'])
-                # A identidade CANÔNICA é UnifiedUser.name — é o que a comanda, o
-                # CRM e a criação de pedido leem. Sem atualizá-la, editar o nome
-                # gravava só no auth.User e ficava invisível ("Desconhecido Nasche"
-                # continuava aparecendo). Espelha o nome cheio aqui.
-                full = f"{first} {last}".strip() or (name or '').strip()
-                uu = getattr(instance, 'unified_user', None)
-                if uu is not None:
-                    uu.name = full
-                    uu.save(update_fields=['name'])
+            instance = super().update(instance, validated_data)
+            if name is not None or instance.tipo_pessoa == StoreCustomer.TipoPessoa.JURIDICA:
+                self._gravar_nome(instance.user, instance, name)
+                full = nome_de_exibicao(instance) or f"{instance.user.first_name} {instance.user.last_name}".strip()
                 # O pedido guarda o nome como SNAPSHOT (customer_name) do momento
                 # da criação. Corrigir o cliente não reescreve pedidos passados —
                 # daí a comanda continuava "Desconhecido". Propaga o nome novo só
@@ -1783,7 +1983,9 @@ class StoreCustomerSerializer(serializers.ModelSerializer):
                         | Q(customer_name='')
                         | Q(customer_name__istartswith='cliente_')
                     ).update(customer_name=full)
-            instance = super().update(instance, validated_data)
+            # A identidade CANÔNICA é UnifiedUser.name — é o que a comanda, o
+            # CRM e a criação de pedido leem. Liga quem ainda não tem.
+            self._ligar_identidade(instance)
             if address_list is not None:
                 self._sync_address_list(instance, address_list)
             return instance

@@ -90,6 +90,20 @@ class StoreCustomer(BaseModel):
     # Contact info
     phone = models.CharField(max_length=20, blank=True)
     whatsapp = models.CharField(max_length=20, blank=True)
+    email = models.EmailField(blank=True)
+
+    # Pessoa física ou jurídica. A NF-e de empresa precisa de CNPJ, razão
+    # social e IE — antes não havia onde guardar e o operador redigitava a
+    # cada nota (HOA COMERCIO, Ivoneth, 27/10).
+    class TipoPessoa(models.TextChoices):
+        FISICA = 'pf', 'Pessoa física'
+        JURIDICA = 'pj', 'Pessoa jurídica'
+
+    tipo_pessoa = models.CharField(max_length=2, choices=TipoPessoa.choices, default=TipoPessoa.FISICA)
+    documento = models.CharField(max_length=14, blank=True, db_index=True, help_text='CPF ou CNPJ, só dígitos')
+    razao_social = models.CharField(max_length=255, blank=True)
+    nome_fantasia = models.CharField(max_length=255, blank=True)
+    inscricao_estadual = models.CharField(max_length=30, blank=True)
 
     # Social links
     instagram = models.CharField(max_length=100, blank=True)
@@ -157,6 +171,10 @@ class StoreCustomer(BaseModel):
         else:
             self.phone = ''
         super().save(*args, **kwargs)
+        # Sem identidade o cliente não aparece na busca do novo pedido (HOA, 27–28/10).
+        if not self.unified_user_id and self.phone:
+            from apps.stores.services.identidade_do_cliente import ligar_identidade
+            ligar_identidade(self)
 
     def __str__(self):
         return f"{self.store.name} - {self.user.email}"

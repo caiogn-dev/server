@@ -80,6 +80,23 @@ class StoreCoupon(models.Model):
                 q |= Q(customer_phone__in=variantes)
         return q
 
+    def pedidos_de_verdade(self, user=None, customer_phone=None):
+        """Pedidos reais deste cliente na loja (None sem identidade)."""
+        identity = self._identity_filter(user=user, customer_phone=customer_phone)
+        if not identity:
+            return None
+        from django.db.models import Q
+        from .order import StoreOrder
+        # metrics-ok: regra de VALIDADE de cupom, nao calculo de faturamento.
+        return StoreOrder.objects.filter(identity, store=self.store).filter(
+            Q(payment_status='paid') | ~Q(status__in=['pending', 'cancelled', 'failed'])
+        )
+
+    def cliente_ja_comprou(self, user=None, customer_phone=None) -> bool:
+        """Banner de boas-vindas some para quem já é cliente (28/10)."""
+        pedidos = self.pedidos_de_verdade(user=user, customer_phone=customer_phone)
+        return bool(pedidos is not None and pedidos.exists())
+
     def is_valid(self, subtotal=None, user=None, customer_phone=None):
         """Check if coupon is valid for use.
 
@@ -100,23 +117,17 @@ class StoreCoupon(models.Model):
         if subtotal and subtotal < self.min_purchase:
             return False, f"Valor mínimo de R$ {self.min_purchase:.2f}"
 
-        identity = self._identity_filter(user=user, customer_phone=customer_phone)
-        if identity:
-            from .order import StoreOrder
-            # Pedido "de verdade": pago, ou já andou no funil — pending
-            # abandonado, cancelado e FALHO não contam contra o cliente.
-            #
-            # `failed` entrou aqui depois de um caso real: a cliente aplicou o
-            # BEMVINDO10, o pagamento falhou, e três minutos depois ela refez o
-            # mesmo pedido — o cupom de primeira compra já estava queimado pela
-            # tentativa que nunca virou venda. Tentativa frustrada de pagar não
-            # é compra; quem perde é sempre o cliente, que paga a diferença sem
-            # entender o motivo.
-            real_orders = StoreOrder.objects.filter(identity, store=self.store).filter(
-                # metrics-ok: regra de VALIDADE de cupom (o pedido conta contra o
-            # limite de uso?), nao calculo de faturamento.
-            Q(payment_status='paid') | ~Q(status__in=['pending', 'cancelled', 'failed'])
-            )
+        # Pedido "de verdade": pago, ou já andou no funil — pending
+        # abandonado, cancelado e FALHO não contam contra o cliente.
+        #
+        # `failed` entrou aqui depois de um caso real: a cliente aplicou o
+        # BEMVINDO10, o pagamento falhou, e três minutos depois ela refez o
+        # mesmo pedido — o cupom de primeira compra já estava queimado pela
+        # tentativa que nunca virou venda. Tentativa frustrada de pagar não
+        # é compra; quem perde é sempre o cliente, que paga a diferença sem
+        # entender o motivo.
+        real_orders = self.pedidos_de_verdade(user=user, customer_phone=customer_phone)
+        if real_orders is not None:
             if self.first_order_only and real_orders.exists():
                 return False, "Cupom válido apenas para primeira compra"
             if self.usage_limit_per_user:

@@ -65,6 +65,21 @@ def memoria_do_agente(agent, session_id: str) -> Optional[RedisChatMessageHistor
         return None
 
 
+def texto_ao_cliente_do_pix(pix_data: Dict[str, Any]) -> str:
+    """O que o CLIENTE lê quando não há PIX a mandar.
+
+    A `message` do `_get_pending_pix_payment` é escrita para o agente (no caso
+    do pedido pago, ela manda não cobrar). No atalho de pagamento ela ia direto
+    ao WhatsApp do cliente.
+    """
+    if pix_data.get('paid'):
+        return (
+            f"✅ O pagamento do pedido #{pix_data.get('order_number')} já está confirmado! "
+            "Não precisa pagar de novo. 😊"
+        )
+    return pix_data.get('message') or 'Nenhum PIX pendente encontrado.'
+
+
 class LangchainService:
     """Service for managing Langchain agents."""
 
@@ -722,9 +737,16 @@ class LangchainService:
                 session_qs = session_qs.filter(company_id__in=profile_ids)
 
             session = session_qs.order_by('-updated_at').first()
+            pedido_pago = None
+            _order = session.order if session and session.order_id else None
+            # O pix_code fica gravado no pedido depois de pago: sem olhar o
+            # payment_status o agente reenviava o PIX de pedido já pago
+            # (Odaíse, CE-2610275997, 27/10 — "Vai demorar muito?").
+            if _order and _order.payment_status != StoreOrder.PaymentStatus.PENDING:
+                pedido_pago = _order
+                session = None
             if session:
                 # Preferir StoreOrder como fonte de verdade quando disponível
-                _order = session.order if session.order_id else None
                 _pix_code = (_order.pix_code if _order else None) or session.pix_code
                 _pix_expires = (_order.pix_expires_at if _order else None) or session.pix_expires_at
                 if _pix_code:
@@ -752,6 +774,19 @@ class LangchainService:
                     'order_number': order.order_number,
                     'total': order.total,
                     'source': 'store_order',
+                }
+
+            if pedido_pago is not None:
+                return {
+                    'found': False,
+                    'paid': True,
+                    'order_number': pedido_pago.order_number,
+                    'message': (
+                        f'O pedido {pedido_pago.order_number} JÁ ESTÁ PAGO '
+                        f'(pagamento: {pedido_pago.get_payment_status_display()}, '
+                        f'pedido: {pedido_pago.get_status_display()}). '
+                        'Não envie PIX nem peça pagamento; responda sobre o andamento do pedido.'
+                    ),
                 }
 
             return {
@@ -2017,7 +2052,7 @@ class LangchainService:
                     },
                 }
 
-            response_text = pix_data.get('message') or 'Nenhum PIX pendente encontrado.'
+            response_text = texto_ao_cliente_do_pix(pix_data)
             if memory:
                 try:
                     memory.add_user_message(message)
