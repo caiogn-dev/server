@@ -14,6 +14,7 @@ from rest_framework.permissions import BasePermission
 from apps.core.exceptions import BaseAPIException
 from apps.stores import billing
 from apps.stores.models import Store, StoreProduct
+from apps.stores.permissions import lojas_com_permissao
 
 ADICIONAL = 'etiqueta_anvisa'
 
@@ -28,9 +29,9 @@ class AdicionalNecessario(BaseAPIException):
 
 
 def lojas_liberadas(user, prefixo='store__'):
-    """Filtro das lojas do usuário (dono/staff) que têm o adicional."""
+    """Filtro das lojas em que o usuário mexe no cardápio e que têm o adicional."""
     return (
-        (Q(**{f'{prefixo}owner': user}) | Q(**{f'{prefixo}staff': user}))
+        Q(**{f'{prefixo}id__in': lojas_com_permissao(user, 'catalog')})
         & billing.q_lojas_com_adicional(ADICIONAL, prefixo)
     )
 
@@ -56,7 +57,7 @@ class ExigeAdicionalEtiqueta(BasePermission):
         if not (user and user.is_authenticated):
             return True  # IsAuthenticated responde o 401
         loja_id = _loja_apontada(request)
-        if loja_id and not Store.objects.filter(Q(owner=user) | Q(staff=user), pk=loja_id).exists():
+        if loja_id and not Store.objects.filter(pk=loja_id, id__in=lojas_com_permissao(user, 'catalog')).exists():
             return True  # loja alheia: a view recusa com o 403/400 de sempre
         minhas = Store.objects.filter(lojas_liberadas(user, prefixo=''))
         liberado = minhas.filter(pk=loja_id).exists() if loja_id else minhas.exists()

@@ -20,6 +20,7 @@ from apps.conversations.models import Conversation
 from apps.stores.models import StoreOrder, Store, StoreProduct
 from apps.agents.models import Agent, AgentConversation, AgentMessage
 from apps.core.services.dashboard_stats import DashboardStatsAggregator
+from apps.stores.permissions import lojas_com_permissao
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +32,8 @@ def _accessible_accounts(user):
     # is_superuser — senão o dashboard soma a receita de todos os tenants.
     return queryset.filter(
         Q(owner=user) |
-        Q(stores__owner=user) |
-        Q(stores__staff=user) |
-        Q(company_profile__store__owner=user) |
-        Q(company_profile__store__staff=user)
+        Q(stores__id__in=lojas_com_permissao(user, 'reports')) |
+        Q(company_profile__store_id__in=lojas_com_permissao(user, 'reports'))
     ).distinct()
 
 

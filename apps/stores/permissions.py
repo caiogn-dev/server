@@ -29,6 +29,10 @@ def get_member_role(user, store) -> str | None:
     """
     if store.owner_id == user.id:
         return 'owner'
+    # Staff M2M é o vínculo antigo, de antes dos papéis: vale como gerente,
+    # que é o acesso que essas contas já tinham em todas as telas.
+    if store.staff.filter(id=user.id).exists():
+        return 'manager'
     from apps.stores.models import StoreTeamMember
     member = StoreTeamMember.objects.filter(
         tenant=store,
@@ -36,6 +40,27 @@ def get_member_role(user, store) -> str | None:
         is_active=True,
     ).first()
     return member.role if member else None
+
+
+def lojas_com_permissao(user, action: str):
+    """IDs das lojas em que o usuário pode fazer `action` — a mesma regra de
+    `has_store_permission`, para filtrar queryset (26/10: estava à mão em ~15
+    telas, sem a equipe). Dono sempre; staff legado como gerente; membro ativo
+    se o papel dele tem a ação."""
+    from django.db.models import Q
+    from apps.stores.models import Store
+
+    if not getattr(user, 'is_authenticated', False):
+        return Store.objects.none().values_list('id', flat=True)
+    papeis = [p for p, acoes in ROLE_PERMISSIONS.items() if action in acoes and p != 'owner']
+    regra = Q(owner=user) | Q(
+        storeteammember_set__user=user,
+        storeteammember_set__is_active=True,
+        storeteammember_set__role__in=papeis,
+    )
+    if action in ROLE_PERMISSIONS['manager']:
+        regra |= Q(staff=user)
+    return Store.objects.filter(regra).distinct().values_list('id', flat=True)
 
 
 def has_store_permission(user, store, action: str) -> bool:

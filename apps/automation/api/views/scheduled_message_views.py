@@ -17,6 +17,7 @@ from apps.automation.api.serializers import (
     UpdateScheduledMessageSerializer,
 )
 from .base import StandardResultsSetPagination
+from apps.stores.permissions import lojas_com_permissao
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +77,7 @@ class ScheduledMessageViewSet(viewsets.ModelViewSet):
                 id=account_id, is_active=True
             ).filter(
                 Q(owner=request.user) |
-                Q(stores__owner=request.user) |
-                Q(stores__staff=request.user)
+                Q(stores__id__in=lojas_com_permissao(request.user, 'whatsapp'))
             )
             account = account_qs.distinct().get()
         except WhatsAppAccount.DoesNotExist:

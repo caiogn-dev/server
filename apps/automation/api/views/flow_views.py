@@ -18,6 +18,7 @@ from apps.automation.api.serializers import (
 )
 from apps.core.permissions import accessible_store_ids
 from .base import StandardResultsSetPagination
+from apps.stores.permissions import lojas_com_permissao
 
 logger = logging.getLogger(__name__)
 
@@ -128,8 +129,7 @@ class FlowSessionViewSet(viewsets.ReadOnlyModelViewSet):
         
         # Security filter
         queryset = queryset.filter(
-            Q(flow__store__owner=user) | 
-            Q(flow__store__staff=user)
+            Q(flow__store_id__in=lojas_com_permissao(user, 'whatsapp'))
         ).distinct()
         
         # Filter by flow
@@ -154,8 +154,7 @@ class FlowExecutionLogViewSet(viewsets.ReadOnlyModelViewSet):
         
         # Security filter
         queryset = queryset.filter(
-            Q(flow__store__owner=user) | 
-            Q(flow__store__staff=user)
+            Q(flow__store_id__in=lojas_com_permissao(user, 'whatsapp'))
         ).distinct()
         
         # Filter by flow

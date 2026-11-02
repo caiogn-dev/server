@@ -32,6 +32,7 @@ from .models import Agent, AgentConversation, AgentMessage
 from .services import LangchainService, AgentService
 from apps.whatsapp.models import WhatsAppAccount
 from apps.core.permissions import accessible_whatsapp_account_ids
+from apps.stores.permissions import lojas_com_permissao
 from .serializers import (
     AgentListSerializer,
     AgentDetailSerializer,
@@ -57,8 +58,7 @@ def _accessible_agents(user):
         Q(accounts__id__in=account_ids) |
         Q(whatsapp_accounts__id__in=account_ids) |
         Q(company_profiles__account__id__in=account_ids) |
-        Q(company_profiles__store__owner=user) |
-        Q(company_profiles__store__staff=user)
+        Q(company_profiles__store_id__in=lojas_com_permissao(user, 'whatsapp'))
     ).distinct()
 
 

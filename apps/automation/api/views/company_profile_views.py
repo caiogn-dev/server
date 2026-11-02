@@ -22,6 +22,7 @@ from apps.automation.api.serializers import (
 )
 from apps.core.permissions import accessible_whatsapp_account_ids, user_can_access_store
 from .base import StandardResultsSetPagination
+from apps.stores.permissions import lojas_com_permissao
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +42,7 @@ class CompanyProfileViewSet(viewsets.ModelViewSet):
         from django.db.models import Q
         from apps.stores.models import Store
         account_ids = accessible_whatsapp_account_ids(user)
-        owned_store_ids = Store.objects.filter(
-            Q(owner=user) | Q(staff=user)
-        ).values_list('id', flat=True)
+        owned_store_ids = lojas_com_permissao(user, 'whatsapp')
         queryset = queryset.filter(
             Q(account_id__in=account_ids) | Q(store_id__in=owned_store_ids)
         ).distinct()

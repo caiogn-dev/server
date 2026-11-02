@@ -15,6 +15,7 @@ from apps.automation.api.serializers import (
     UpdateAutoMessageSerializer,
 )
 from .base import StandardResultsSetPagination
+from apps.stores.permissions import lojas_com_permissao
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +35,7 @@ class AutoMessageViewSet(viewsets.ModelViewSet):
         # Escopo de tenant: nenhuma flag de conta abre cross-tenant — nem
         # is_staff nem is_superuser.
         queryset = queryset.filter(
-            Q(company__store__owner=user) |
-            Q(company__store__staff=user) |
+            Q(company__store_id__in=lojas_com_permissao(user, 'whatsapp')) |
             Q(company__account__owner=user)
         ).distinct()
         
@@ -67,8 +67,7 @@ class AutoMessageViewSet(viewsets.ModelViewSet):
         company_qs = CompanyProfile.objects.filter(
             id=company_id, is_active=True
         ).filter(
-            Q(store__owner=request.user) |
-            Q(store__staff=request.user) |
+            Q(store_id__in=lojas_com_permissao(request.user, 'whatsapp')) |
             Q(account__owner=request.user)
         )
         try:

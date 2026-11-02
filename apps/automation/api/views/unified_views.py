@@ -16,6 +16,7 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter
 from apps.automation.services import LLMOrchestratorService, ResponseSource
 from apps.whatsapp.models import WhatsAppAccount
 from apps.conversations.models import Conversation
+from apps.stores.permissions import lojas_com_permissao
 
 logger = logging.getLogger(__name__)
 
@@ -84,8 +85,7 @@ class UnifiedProcessView(APIView):
             from django.db.models import Q as _Q
             account_qs = account_qs.filter(
                 _Q(owner=request.user) |
-                _Q(stores__owner=request.user) |
-                _Q(stores__staff=request.user)
+                _Q(stores__id__in=lojas_com_permissao(request.user, 'whatsapp'))
             )
             account = account_qs.distinct().get()
         except WhatsAppAccount.DoesNotExist:
@@ -160,8 +160,7 @@ class UnifiedStatsView(APIView):
             from django.db.models import Q as _Q
             account_qs = account_qs.filter(
                 _Q(owner=request.user) |
-                _Q(stores__owner=request.user) |
-                _Q(stores__staff=request.user)
+                _Q(stores__id__in=lojas_com_permissao(request.user, 'whatsapp'))
             )
             account = account_qs.distinct().get()
         except WhatsAppAccount.DoesNotExist:

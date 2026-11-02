@@ -12,6 +12,7 @@ from apps.automation.models import CustomerSession
 from apps.automation.services import AutomationService
 from apps.automation.api.serializers import CustomerSessionSerializer
 from .base import StandardResultsSetPagination
+from apps.stores.permissions import lojas_com_permissao
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +32,7 @@ class CustomerSessionViewSet(viewsets.ReadOnlyModelViewSet):
         # Escopo de tenant: nenhuma flag de conta abre cross-tenant — nem
         # is_staff nem is_superuser.
         queryset = queryset.filter(
-            Q(company__store__owner=user) |
-            Q(company__store__staff=user) |
+            Q(company__store_id__in=lojas_com_permissao(user, 'whatsapp')) |
             Q(company__account__owner=user)
         ).distinct()
         

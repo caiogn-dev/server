@@ -1237,11 +1237,8 @@ class StoreOrderCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError({'store': 'Store not found'})
 
         if request and request.user.is_authenticated:
-            has_access = (
-                store.owner_id == request.user.id
-                or store.staff.filter(id=request.user.id).exists()
-            )
-            if not has_access:
+            from apps.stores.permissions import has_store_permission
+            if not has_store_permission(request.user, store, 'orders'):
                 raise serializers.ValidationError({'store': 'No access to this store'})
 
         return store
