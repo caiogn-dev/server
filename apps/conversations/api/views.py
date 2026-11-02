@@ -48,9 +48,23 @@ def _search_token_variants(token):
 
 
 def _accessible_conversations(user, store=None):
-    from django.db.models import Count, Q, Subquery, OuterRef
+    from django.db.models import Count, IntegerField, Subquery, OuterRef
+    from django.db.models.functions import Coalesce
     from apps.whatsapp.models.message import Message
     from apps.users.models import UnifiedUser
+
+    def _contar_mensagens(**filtros):
+        # Subquery, não Count('messages'): o JOIN com GROUP BY agregava o histórico
+        # de todas as conversas da loja antes do LIMIT da página. Com 30 mil
+        # mensagens a lista levava 8 s (02/nov). Assim conta só as linhas da página.
+        return Coalesce(
+            Subquery(
+                Message.objects.filter(conversation=OuterRef('pk'), **filtros)
+                .order_by().values('conversation').annotate(total=Count('pk')).values('total'),
+                output_field=IntegerField(),
+            ),
+            0,
+        )
 
     # Sem isto o serializer fazia, POR conversa: 3 queries em whatsapp_messages
     # (count/preview/unread) + 1 no handover (OneToOne) + 1 no unified_users = N+1.
@@ -69,12 +83,8 @@ def _accessible_conversations(user, store=None):
     ).prefetch_related(
         'account__stores', 'account__company_profile'
     ).annotate(
-        anno_message_count=Count('messages', distinct=True),
-        anno_unread_count=Count(
-            'messages',
-            filter=Q(messages__direction='inbound', messages__read_at__isnull=True),
-            distinct=True,
-        ),
+        anno_message_count=_contar_mensagens(),
+        anno_unread_count=_contar_mensagens(direction='inbound', read_at__isnull=True),
         anno_last_text=Subquery(_last_msg.values('text_body')[:1]),
         # Imagem, documento e áudio não têm text_body: sem o tipo, a última
         # mensagem virava preview VAZIO e a conversa parecia em branco na lista
@@ -88,15 +98,17 @@ def _accessible_conversations(user, store=None):
     queryset = queryset.filter(is_active=True, account_id__in=account_ids)
 
     # ORDENAÇÃO EXPLÍCITA — não confie no `ordering` do Meta aqui.
-    # O `annotate()` acima é agregação (Count), e o Django DESCARTA o ordering
-    # default do Meta em query agregada. A lista voltava na ordem arbitrária do
-    # Postgres: com paginação, a conversa que acabou de chegar caía numa página
-    # qualquer e o painel mostrava no topo uma conversa de dias atrás
-    # (06/ago: Lúcia às 13:18 sumida, Juliana de 05/ago no topo).
+    # A lista já voltou na ordem arbitrária do Postgres: com paginação, a conversa
+    # que acabou de chegar caía numa página qualquer e o painel mostrava no topo
+    # uma conversa de dias atrás (06/ago: Lúcia às 13:18 sumida, Juliana de 05/ago
+    # no topo).
     #
     # nulls_last: conversa sem nenhuma mensagem tem last_message_at NULL e no
     # Postgres DESC coloca NULL PRIMEIRO — ela ia furar a fila no topo do inbox.
-    return _restrict_to_store(queryset, store).distinct().order_by(
+    #
+    # Sem distinct(): nada aqui multiplica linha, e ele impedia o Django de limpar
+    # as anotações da query de contagem da paginação.
+    return _restrict_to_store(queryset, store).order_by(
         F('last_message_at').desc(nulls_last=True),
         '-created_at',
     )
@@ -131,9 +143,12 @@ def _restrict_to_store(queryset, store):
         return queryset.none()
 
     # A conta pode estar ligada à loja pelo M2M `stores` ou pelo CompanyProfile.
-    return queryset.filter(
-        Q(account__stores=loja) | Q(account__company_profile__store=loja)
-    )
+    # Por subquery: JOIN no M2M duplicaria a conversa de conta ligada nas duas formas.
+    from apps.whatsapp.models import WhatsAppAccount
+    contas = WhatsAppAccount.objects.filter(
+        Q(stores=loja) | Q(company_profile__store=loja)
+    ).values('pk')
+    return queryset.filter(account_id__in=contas)
 
 
 @extend_schema_view(
