@@ -759,6 +759,10 @@ class StoreProductTypeSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
     
     def get_products_count(self, obj):
+        # Annotation do viewset (1 JOIN); fallback p/ query fora do viewset.
+        anno = getattr(obj, 'anno_products_count', None)
+        if anno is not None:
+            return anno
         return obj.products.filter(status='active').count()
 
 
