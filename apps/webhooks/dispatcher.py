@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 # envs WHATSAPP_APP_SECRET / INSTAGRAM_APP_SECRET / META_WEBHOOK_APP_SECRET.
 _PROVIDERS_REQUIRE_SIGNATURE: frozenset = frozenset({
     'whatsapp', 'instagram', 'messenger', 'mercadopago', 'toca-delivery', 'pagarme',
+    '99food',
 })
 
 # Providers da Meta que compartilham o formato de assinatura X-Hub-Signature-256.
@@ -129,7 +130,7 @@ class WebhookDispatcherView(View):
 
         # Extract event type
         event_type = self._extract_event_type(provider, payload, headers)
-        event_id = self._extract_event_id(provider, payload, headers)
+        event_id = self._extract_event_id(provider, payload, headers, request.body)
 
         # Check for duplicates — any non-failed status means we already have it
         if event_id:
@@ -142,7 +143,7 @@ class WebhookDispatcherView(View):
 
             if existing:
                 logger.info(f"Duplicate webhook event: {event_id} (status={existing.status})")
-                return HttpResponse("OK", status=200)
+                return self._resposta_ok(provider)
 
         # Create event log (only after HMAC passes)
         event = WebhookEvent.objects.create(
@@ -167,7 +168,7 @@ class WebhookDispatcherView(View):
             event.handler_result = result or {}
             event.save(update_fields=['status', 'processed_at', 'handler_result'])
             
-            return HttpResponse("OK", status=200)
+            return self._resposta_ok(provider)
             
         except Exception as e:
             logger.exception(f"Error handling webhook: {e}")
@@ -177,7 +178,14 @@ class WebhookDispatcherView(View):
             event.save(update_fields=['status', 'error_message'])
             
             # Still return 200 to prevent retries from provider
-            return HttpResponse("OK", status=200)
+            return self._resposta_ok(provider)
+
+    @staticmethod
+    def _resposta_ok(provider: str) -> HttpResponse:
+        # A 99 só considera entregue com JSON errno 0; texto "OK" a faria reenviar.
+        if provider == '99food':
+            return JsonResponse({'errno': 0, 'errmsg': 'ok'})
+        return HttpResponse("OK", status=200)
     
     def _handle_verification(self, request, provider: str, **kwargs) -> HttpResponse:
         """Handle verification challenge."""
@@ -251,9 +259,14 @@ class WebhookDispatcherView(View):
         elif provider == 'pagarme':
             return payload.get('type', 'unknown')
 
+        elif provider == '99food':
+            return str(payload.get('type') or 'unknown')[:100]
+
         return 'unknown'
     
-    def _extract_event_id(self, provider: str, payload: dict, headers: dict) -> Optional[str]:
+    def _extract_event_id(
+        self, provider: str, payload: dict, headers: dict, request_body: bytes = b'',
+    ) -> Optional[str]:
         """Extract unique event ID for deduplication."""
         try:
             if provider == 'whatsapp':
@@ -296,6 +309,11 @@ class WebhookDispatcherView(View):
                 if event_id:
                     return f"toca_{event_id}"
 
+            elif provider == '99food':
+                # A 99 não manda id do aviso. Reenvio é o mesmo corpo byte a byte
+                # (a assinatura já depende disso), então o hash do corpo identifica.
+                return f"99food_{hashlib.sha256(request_body).hexdigest()}"
+
             elif provider == 'pagarme':
                 # Pagar.me manda o id do envio ('hook_...') na raiz do corpo.
                 hook_id = payload.get('id')
@@ -329,8 +347,31 @@ class WebhookDispatcherView(View):
         expected = hmac.new(secret.encode(), request.body, hashlib.sha256).hexdigest()
         return hmac.compare_digest(signature_header[7:], expected)
 
+    @staticmethod
+    def _verify_99food_signature(request) -> Optional[bool]:
+        """99Food: header didi-header-sign = MD5(corpo bruto + app_secret).
+
+        MD5 é o que a 99 publica; não há alternativa do lado de quem recebe.
+        """
+        from django.conf import settings
+        try:
+            endpoint = WebhookEndpoint.objects.get(provider='99food', is_active=True)
+            segredo = endpoint.secret or ''
+        except WebhookEndpoint.DoesNotExist:
+            segredo = ''
+        segredo = segredo or getattr(settings, 'NINETY_NINE_APP_SECRET', '')
+        if not segredo:
+            return None
+        recebida = (request.headers.get('didi-header-sign') or '').strip().lower()
+        if not recebida:
+            return False
+        esperada = hashlib.md5(request.body + segredo.encode()).hexdigest()  # noqa: S324
+        return hmac.compare_digest(recebida, esperada)
+
     def _verify_signature(self, request, provider: str, payload: dict) -> Optional[bool]:
         """Verify webhook signature."""
+        if provider == '99food':
+            return self._verify_99food_signature(request)
         try:
             try:
                 endpoint = WebhookEndpoint.objects.get(provider=provider, is_active=True)
@@ -447,6 +488,7 @@ def register_default_handlers():
     from .handlers.messenger_handler import MessengerHandler
     from .handlers.toca_delivery_handler import TocaDeliveryHandler
     from .handlers.pagarme_handler import PagarmeHandler
+    from .handlers.ninety_nine_food_handler import NinetyNineFoodHandler
 
     WebhookDispatcherView.register_handler('whatsapp', WhatsAppHandler)
     WebhookDispatcherView.register_handler('mercadopago', MercadoPagoHandler)
@@ -454,6 +496,7 @@ def register_default_handlers():
     WebhookDispatcherView.register_handler('messenger', MessengerHandler)
     WebhookDispatcherView.register_handler('toca-delivery', TocaDeliveryHandler)
     WebhookDispatcherView.register_handler('pagarme', PagarmeHandler)
+    WebhookDispatcherView.register_handler('99food', NinetyNineFoodHandler)
 
 
 # Auto-register on module load

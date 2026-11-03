@@ -460,6 +460,9 @@ TOCA_DELIVERY_PASSWORD = os.environ.get('TOCA_DELIVERY_PASSWORD', '').strip()
 TOCA_DELIVERY_ENABLED = os.environ.get('TOCA_DELIVERY_ENABLED', 'false').strip().lower() == 'true'
 # Webhook secret shared with Toca Delivery for validating status callbacks
 TOCA_DELIVERY_WEBHOOK_SECRET = os.environ.get('TOCA_DELIVERY_WEBHOOK_SECRET', '').strip()
+# 99Food: o mesmo app_secret assina as chamadas à API e os webhooks (MD5).
+NINETY_NINE_APP_ID = os.environ.get('NINETY_NINE_APP_ID', '').strip()
+NINETY_NINE_APP_SECRET = os.environ.get('NINETY_NINE_APP_SECRET', '').strip()
 
 # Base URL for webhooks and callbacks
 BASE_URL = os.environ.get('BASE_URL', 'https://backend.pastita.com.br')
