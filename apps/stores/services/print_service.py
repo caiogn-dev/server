@@ -472,6 +472,12 @@ def _notas_da_loja(order: StoreOrder) -> str:
     PCs das lojas rodam agentes antigos que não leriam um campo novo.
     """
     notas = (order.internal_notes or '').strip()
+    # Ocasião do pedido (aniversário, casamento...), quando a loja pergunta.
+    from apps.stores.services.ocasiao import CHAVE_DO_PEDIDO, para_comanda
+    metadata = order.metadata if isinstance(order.metadata, dict) else {}
+    linha_da_ocasiao = para_comanda(metadata.get(CHAVE_DO_PEDIDO))
+    if linha_da_ocasiao:
+        notas = f'{linha_da_ocasiao} | {notas}' if notas else linha_da_ocasiao
     if order.payment_method == 'card_on_delivery' and order.payment_status != 'paid':
         valor = f"{Decimal(order.total or 0):.2f}".replace('.', ',')
         aviso = f'LEVAR MAQUININHA - cobrar R$ {valor} no cartao'

@@ -638,6 +638,8 @@ class StoreAppConfigView(APIView):
         from apps.stores.services.informativos import no_ar_para_a_vitrine
         from apps.stores.services.exibicao_do_cardapio import ler as exibicao_do_cardapio
         from apps.stores.services.prazo_de_entrega import para_vitrine as prazo_para_vitrine
+        from apps.stores.services import ocasiao as ocasiao_service
+        pergunta_ocasiao = ocasiao_service.pergunta_ligada(store)
         return Response({
             # Como o produto aparece (limite da descrição, foto, estoque...).
             'exibicao': exibicao_do_cardapio(store),
@@ -651,6 +653,11 @@ class StoreAppConfigView(APIView):
             'cashback_program': _cashback_program_payload(store),
             'featured_coupon': _featured_coupon_payload(store),
             'payment': payment_config,
+            # Pergunta "qual a ocasião?" no checkout (loja de encomenda).
+            'ocasiao': {
+                'perguntar': pergunta_ocasiao,
+                'opcoes': ocasiao_service.opcoes() if pergunta_ocasiao else [],
+            },
             'delivery': {
                 'city': store.city or '',
                 'state': store.state or '',
@@ -1447,6 +1454,14 @@ class StoreCheckoutView(APIView):
             if session_id:
                 order.metadata = {**(order.metadata or {}), 'cart_key': session_id}
                 campos.append('metadata')
+            # Ocasião (aniversário, casamento...). Só na loja que pergunta;
+            # valor desconhecido é descartado em silêncio, como o troco.
+            from apps.stores.services.ocasiao import CHAVE_DO_PEDIDO, ocasiao_valida
+            ocasiao_escolhida = ocasiao_valida(store, request.data.get('ocasiao'))
+            if ocasiao_escolhida:
+                order.metadata = {**(order.metadata or {}), CHAVE_DO_PEDIDO: ocasiao_escolhida}
+                if 'metadata' not in campos:
+                    campos.append('metadata')
             if campos:
                 order.save(update_fields=[*campos, 'updated_at'])
 

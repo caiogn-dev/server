@@ -58,6 +58,9 @@ class StoreSerializer(serializers.ModelSerializer):
     voucher_fee_percent = serializers.DecimalField(
         max_digits=5, decimal_places=2, required=False, allow_null=True,
     )
+    # Checkout pergunta "qual a ocasião?" (loja de encomenda). Mesma regra dos
+    # campos acima: campo próprio, mescla no metadata.
+    perguntar_ocasiao = serializers.BooleanField(required=False)
 
     # O Google devolve até 14 casas decimais; o campo guarda 7 (max_digits=10).
     # Sem arredondar, o PATCH da localização voltava 400 (03/10).
@@ -90,7 +93,7 @@ class StoreSerializer(serializers.ModelSerializer):
             'default_prep_minutes', 'prazo_entrega_min', 'prazo_entrega_max',
             'operating_hours', 'is_open',
             'avg_rating', 'reviews_count',
-            'owner', 'metadata', 'vale_por_link_brands', 'voucher_fee_percent', 'banners',
+            'owner', 'metadata', 'vale_por_link_brands', 'voucher_fee_percent', 'perguntar_ocasiao', 'banners',
             'meta_pixel_id', 'meta_pixel_enabled',
             'clarity_id', 'clarity_enabled',
             'plan', 'trial_ends_at', 'onboarding_completed',
@@ -153,6 +156,8 @@ class StoreSerializer(serializers.ModelSerializer):
         dados['vale_por_link_brands'] = metadata.get(self.CHAVE_VALE_POR_LINK) or []
         from apps.stores.services.acrescimo_do_vale import percentual_do_vale
         dados['voucher_fee_percent'] = float(percentual_do_vale(instance))
+        from apps.stores.services.ocasiao import pergunta_ligada
+        dados['perguntar_ocasiao'] = pergunta_ligada(instance)
         return dados
 
     def _guardar_vale_por_link(self, instancia, valores):
@@ -179,7 +184,21 @@ class StoreSerializer(serializers.ModelSerializer):
         instancia.save(update_fields=['metadata'])
         return instancia
 
-    def _guardar_campos_de_metadata(self, loja, vale, acrescimo):
+    def _guardar_pergunta_de_ocasiao(self, instancia, ligado):
+        """Desligar REMOVE a chave — False guardado parece configuração."""
+        from apps.stores.services.ocasiao import CHAVE_DA_LOJA
+        metadata = dict(instancia.metadata or {})
+        if ligado:
+            metadata[CHAVE_DA_LOJA] = True
+        else:
+            metadata.pop(CHAVE_DA_LOJA, None)
+        instancia.metadata = metadata
+        instancia.save(update_fields=['metadata'])
+        return instancia
+
+    def _guardar_campos_de_metadata(self, loja, vale, acrescimo, ocasiao=None):
+        if ocasiao is not None:
+            loja = self._guardar_pergunta_de_ocasiao(loja, ocasiao)
         if vale is not None:
             loja = self._guardar_vale_por_link(loja, vale)
         if acrescimo is not None:
@@ -190,14 +209,16 @@ class StoreSerializer(serializers.ModelSerializer):
         # `pop` com sentinela: ausente é "não mexe", presente é "é isto".
         vale = validated_data.pop('vale_por_link_brands', None)
         acrescimo = validated_data.pop('voucher_fee_percent', None)
+        ocasiao = validated_data.pop('perguntar_ocasiao', None)
         loja = super().create(validated_data)
-        return self._guardar_campos_de_metadata(loja, vale, acrescimo)
+        return self._guardar_campos_de_metadata(loja, vale, acrescimo, ocasiao)
 
     def update(self, instance, validated_data):
         vale = validated_data.pop('vale_por_link_brands', None)
         acrescimo = validated_data.pop('voucher_fee_percent', None)
+        ocasiao = validated_data.pop('perguntar_ocasiao', None)
         loja = super().update(instance, validated_data)
-        return self._guardar_campos_de_metadata(loja, vale, acrescimo)
+        return self._guardar_campos_de_metadata(loja, vale, acrescimo, ocasiao)
 
     # Estes 5 contadores são anotados na queryset do StoreViewSet (anno_*) via
     # Subquery — 1 query em vez de 5 por loja. Se a anotação não estiver
