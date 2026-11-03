@@ -2269,6 +2269,8 @@ def build_combo_groups(obj, somente_disponiveis=False):
                 'variant_name': variant.name,
                 'price': float(variant.price or anchor_price),
                 'price_override': float(limit.price_override) if limit.price_override else None,
+                # Combo fixo: quanto a escolha soma ao preço do combo.
+                'acrescimo': float(limit.acrescimo or 0),
                 # stock=None (ilimitado) quando não rastreia estoque/permite backorder;
                 # senão o modal desabilita a opção achando que está esgotada.
                 'stock': (variant.stock_quantity if v_tracks else None),
@@ -2292,6 +2294,7 @@ def build_combo_groups(obj, somente_disponiveis=False):
                 'name': p.name,
                 'price': float(opt.price_override) if opt.price_override is not None else float(p.price),
                 'price_override': float(opt.price_override) if opt.price_override is not None else None,
+                'acrescimo': float(opt.acrescimo or 0),
                 # stock=None (ilimitado) p/ produto sob encomenda (track_stock=False) —
                 # senão o modal trata como esgotado e desabilita a opção do combo.
                 'stock': (p.stock_quantity if p_tracks else None),
@@ -2319,6 +2322,19 @@ def build_combo_groups(obj, somente_disponiveis=False):
         })
 
     return groups_data
+
+
+def _acrescimo_da_opcao(valor) -> Decimal:
+    """Acréscimo da opção do combo: número >= 0 com 2 casas; resto vira 0.
+    Negativo viraria desconto escondido numa escolha."""
+    from decimal import InvalidOperation
+    try:
+        numero = Decimal(str(valor).replace(',', '.')) if valor not in (None, '') else Decimal('0')
+    except (InvalidOperation, ValueError, TypeError):
+        return Decimal('0.00')
+    if not numero.is_finite() or numero < 0:
+        return Decimal('0.00')
+    return numero.quantize(Decimal('0.01'))
 
 
 class StoreComboSerializer(serializers.ModelSerializer):
@@ -2413,6 +2429,7 @@ class StoreComboSerializer(serializers.ModelSerializer):
                     variant_id=variant_id,
                     max_selections=limit_data.get('max_selections') or 1,
                     price_override=limit_data.get('price_override') or None,
+                    acrescimo=_acrescimo_da_opcao(limit_data.get('acrescimo')),
                 )
             for pos, opt_data in enumerate(product_options):
                 opt_product_id = opt_data.get('product') or opt_data.get('product_id')
@@ -2423,6 +2440,7 @@ class StoreComboSerializer(serializers.ModelSerializer):
                     product_id=opt_product_id,
                     max_selections=opt_data.get('max_selections') or 1,
                     price_override=opt_data.get('price_override') or None,
+                    acrescimo=_acrescimo_da_opcao(opt_data.get('acrescimo')),
                     position=opt_data.get('position', pos),
                 )
 

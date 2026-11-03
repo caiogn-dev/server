@@ -86,6 +86,11 @@ class ComboProductGroupVariantLimit(models.Model):
         blank=True
     )
 
+    # Combo de PREÇO FECHADO: quanto esta escolha soma ao preço do combo
+    # ("Tilápia +R$ 3,00"). Não é o `price_override`, que no combo de
+    # montagem é o preço do item inteiro. Ver StoreCombo.compute_unit_price.
+    acrescimo = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -129,6 +134,11 @@ class ComboProductGroupProductOption(models.Model):
         null=True,
         blank=True
     )
+
+    # Combo de PREÇO FECHADO: quanto esta escolha soma ao preço do combo
+    # ("Tilápia +R$ 3,00"). Não é o `price_override`, que no combo de
+    # montagem é o preço do item inteiro. Ver StoreCombo.compute_unit_price.
+    acrescimo = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 
     position = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)

@@ -62,13 +62,14 @@ class StoreCombo(models.Model):
         """Preço unitário do combo dado as seleções do cliente.
 
         selections = {group_id: [id, ...]} onde id é variant_id OU product_id.
-        - dynamic_pricing False → preço fixo (self.price).
+        - dynamic_pricing False → preço fixo (self.price) + Σ `acrescimo` das
+          opções escolhidas ("Tilápia +R$ 3,00"; zero na maioria).
         - dynamic_pricing True  → self.price (base) + Σ por item selecionado de
           (price_override do item, ou preço normal do produto/variante).
         """
         base = self.price or Decimal('0.00')
         if not self.dynamic_pricing:
-            return base
+            return Decimal(str(base)) + self._acrescimos(selections)
 
         total = Decimal(str(base))
         groups = {str(g.id): g for g in self.groups.all().prefetch_related(
@@ -96,6 +97,25 @@ class StoreCombo(models.Model):
                     total += Decimal(str(option_price[key]))
                 elif key in variant_price:
                     total += Decimal(str(variant_price[key]))
+        return total
+
+    def _acrescimos(self, selections) -> Decimal:
+        """Soma o acréscimo de cada escolha (repetida conta de novo). Id que
+        não é opção do grupo não soma — o navegador não inventa preço."""
+        total = Decimal('0.00')
+        groups = {str(g.id): g for g in self.groups.all().prefetch_related(
+            'variant_limits', 'product_options'
+        )}
+        for group_id, selected_ids in (selections or {}).items():
+            group = groups.get(str(group_id))
+            if not group:
+                continue
+            acrescimo = {str(l.variant_id): l.acrescimo for l in group.variant_limits.all()}
+            acrescimo.update({str(o.product_id): o.acrescimo for o in group.product_options.all()})
+            for sel_id in (selected_ids or []):
+                valor = acrescimo.get(str(sel_id))
+                if valor and valor > 0:
+                    total += Decimal(str(valor))
         return total
 
     @property
