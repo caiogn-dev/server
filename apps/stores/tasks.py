@@ -674,3 +674,35 @@ def revalidar_cardapio(self, slug: str):
     if resposta.status_code >= 500:
         raise self.retry(exc=RuntimeError(f'cardápio respondeu {resposta.status_code}'))
     return resposta.status_code
+
+
+# ── 99Food ────────────────────────────────────────────────────────────────
+# A 99 cancela sozinha o pedido não confirmado em 5 minutos: as tentativas
+# ficam todas dentro dessa janela (20 s, 40 s, 80 s, 160 s).
+
+@shared_task(bind=True, max_retries=4)
+def confirmar_pedido_da_99(self, order_id: str):
+    from apps.stores.models import StoreOrder
+    from apps.stores.services import pedidos_da_99
+
+    pedido = StoreOrder.objects.select_related('store').filter(pk=order_id).first()
+    if pedido is None or pedido.status == StoreOrder.OrderStatus.CANCELLED:
+        return
+    try:
+        pedidos_da_99.confirmar(pedido)
+    except pedidos_da_99.ErroDa99 as exc:
+        raise self.retry(exc=exc, countdown=20 * (2 ** self.request.retries))
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def avisar_status_a_99(self, order_id: str, novo_status: str, motivo: str = ''):
+    from apps.stores.models import StoreOrder
+    from apps.stores.services import pedidos_da_99
+
+    pedido = StoreOrder.objects.select_related('store').filter(pk=order_id).first()
+    if pedido is None:
+        return
+    try:
+        pedidos_da_99.avisar_status(pedido, novo_status, motivo)
+    except pedidos_da_99.ErroDa99 as exc:
+        raise self.retry(exc=exc)

@@ -4,12 +4,12 @@ Corpo de todo aviso, segundo a 99:
     {"app_id": <long>, "app_shop_id": "<id da loja no nosso sistema>",
      "type": "<tipo>", "timestamp": <int>, "data": {...} | "<string>"}
 
-Por ora só registra: a conta da loja na 99 ainda está em aprovação e os tipos
-de evento de cada módulo serão tratados quando a integração de pedidos e do
-99Entrega existir. O dispatcher já garantiu a assinatura e guardou o evento
-(WebhookEvent), então nenhum aviso se perde até lá.
+`orderNew` vira pedido no quadro (e já pede a confirmação, que a 99 exige em
+5 min); cancelamento, conclusão e status de entrega atualizam o pedido. A
+assinatura já foi conferida pelo dispatcher e o evento já está guardado.
 
-A 99 dá 6 s por aviso: qualquer processamento pesado futuro vai para o Celery.
+A 99 dá 6 s por aviso e reenvia se a resposta não for errno 0: criar o pedido é
+só banco; tudo que chama a 99 de volta vai para o Celery.
 """
 import logging
 from typing import Any, Dict
@@ -24,7 +24,21 @@ class NinetyNineFoodHandler(BaseHandler):
     PROVIDER = '99food'
 
     def handle(self, event: WebhookEvent, payload: dict, headers: dict) -> Dict[str, Any]:
+        from apps.stores.services import pedidos_da_99
+
         tipo = payload.get('type') or 'unknown'
-        loja = payload.get('app_shop_id') or ''
-        logger.info('99food: aviso %s da loja %s guardado (evento %s)', tipo, loja, event.pk)
-        return {'ok': True, 'type': tipo, 'app_shop_id': loja, 'processado': False}
+        codigo = payload.get('app_shop_id') or ''
+        dados = payload.get('data')
+        loja = pedidos_da_99.loja_do_aviso(codigo)
+        if loja is None:
+            logger.warning('99food: aviso %s de loja desconhecida %r (evento %s)', tipo, codigo, event.pk)
+            return {'ok': True, 'type': tipo, 'processado': False, 'motivo': 'loja desconhecida'}
+
+        if tipo == 'orderNew' and isinstance(dados, dict):
+            pedido, criado = pedidos_da_99.receber_pedido_novo(loja, dados)
+            return {'ok': True, 'type': tipo, 'processado': True,
+                    'order_number': pedido.order_number, 'criado': criado}
+
+        processado = pedidos_da_99.aplicar_aviso(loja, tipo, dados)
+        logger.info('99food: aviso %s da loja %s (evento %s, processado=%s)', tipo, loja.slug, event.pk, processado)
+        return {'ok': True, 'type': tipo, 'processado': processado}

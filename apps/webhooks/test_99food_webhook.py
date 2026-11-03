@@ -127,3 +127,31 @@ def test_tipo_desconhecido_ainda_responde_errno_zero(client):
     _resposta_aceita(_post(client, corpo, _assinatura(corpo)))
 
     assert WebhookEvent.objects.get(provider='99food').event_type == 'algumTipoNovo2027'
+
+
+@pytest.mark.django_db
+@override_settings(NINETY_NINE_APP_SECRET=SEGREDO)
+def test_pedido_novo_assinado_vira_pedido_no_quadro(client, django_user_model):
+    from unittest import mock
+
+    from apps.stores.models import Store, StoreOrder
+
+    dono = django_user_model.objects.create_user(username='dono-e2e-99', password='x')
+    loja = Store.objects.create(name='Cê', slug='ce-saladas', owner=dono, status='active')
+    corpo = _corpo(order_info={
+        'order_id': PEDIDO_ID_64BITS, 'order_index': 3, 'pay_method': 1, 'pay_type': 1,
+        'delivery_type': 2, 'fulfillment_mode': 0,
+        'price': {'order_price': 3990, 'delivery_price': 500, 'real_pay_price': 4490},
+        'receive_address': {'name': 'Ana', 'street_name': 'Quadra 104 Norte', 'city': 'Palmas'},
+        'order_items': [{'name': 'Queridinha', 'amount': 1, 'total_price': 3990, 'sub_item_list': []}],
+    })
+    with mock.patch('apps.stores.services.pedidos_da_99.confirmar_depois'), \
+            mock.patch('apps.stores.services.pedidos_da_99.imprimir_depois'):
+        _resposta_aceita(_post(client, corpo, _assinatura(corpo)))
+        # A 99 reenvia o mesmo aviso: continua um pedido só.
+        _post(client, corpo, _assinatura(corpo))
+
+    pedido = StoreOrder.objects.get(store=loja)
+    assert pedido.source == '99food'
+    assert str(pedido.total) == '44.90'
+    assert pedido.metadata['99food']['order_id'] == str(PEDIDO_ID_64BITS)
