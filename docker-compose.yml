@@ -67,6 +67,9 @@ x-django-env: &django-env
   INSTAGRAM_LOGIN_APP_ID: ${INSTAGRAM_LOGIN_APP_ID}
   INSTAGRAM_LOGIN_APP_SECRET: ${INSTAGRAM_LOGIN_APP_SECRET}
   INSTAGRAM_OAUTH_REDIRECT_URI: ${INSTAGRAM_OAUTH_REDIRECT_URI:-https://backend.pastita.com.br/ig/callback}
+  # 99Food: assinatura didi-header-sign = MD5(corpo + app_secret).
+  NINETY_NINE_APP_ID: ${NINETY_NINE_APP_ID:-}
+  NINETY_NINE_APP_SECRET: ${NINETY_NINE_APP_SECRET:-}
   # Versão única da Graph API (WhatsApp, Meta e Instagram saem daqui).
   META_GRAPH_VERSION: ${META_GRAPH_VERSION:-v26.0}
   # Endereço do painel para onde o login do Instagram volta. FRONTEND_URL é
