@@ -1049,7 +1049,9 @@ class OrderReceiptView(APIView):
         if token:
             if not (
                 order.access_token
-                and hmac.compare_digest(str(order.access_token), str(token))
+                and hmac.compare_digest(
+                    str(order.access_token).encode('utf-8'), str(token).encode('utf-8')
+                )
             ):
                 return Response({"error": "Token inválido"}, status=status.HTTP_403_FORBIDDEN)
         elif user:

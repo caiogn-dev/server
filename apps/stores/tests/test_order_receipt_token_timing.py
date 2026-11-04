@@ -32,6 +32,9 @@ class OrderReceiptTokenTest(SimpleTestCase):
     def test_token_errado_403(self):
         self.assertEqual(self._get(_order('abc123'), 'abc124').status_code, 403)
 
+    def test_token_nao_ascii_403_sem_500(self):
+        self.assertEqual(self._get(_order('abc123'), '\u00e9').status_code, 403)
+
     def test_pedido_sem_token_nao_aceita_nada(self):
         self.assertEqual(self._get(_order(''), 'x').status_code, 403)
         self.assertEqual(self._get(_order(None), 'x').status_code, 403)
