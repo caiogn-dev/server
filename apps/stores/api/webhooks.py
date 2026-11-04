@@ -1047,7 +1047,10 @@ class OrderReceiptView(APIView):
         # Authorization: token OR authenticated owner/staff
         user = request.user if request.user and request.user.is_authenticated else None
         if token:
-            if order.access_token != token:
+            if not (
+                order.access_token
+                and hmac.compare_digest(str(order.access_token), str(token))
+            ):
                 return Response({"error": "Token inválido"}, status=status.HTTP_403_FORBIDDEN)
         elif user:
             # is_staff NÃO concede acesso cross-tenant (só superuser).
