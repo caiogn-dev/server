@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from rest_framework import serializers
 from ..models import (
     InstagramAccount, InstagramMedia, InstagramMediaItem,
@@ -146,8 +148,29 @@ class InstagramConversationSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'account', 'created_at', 'updated_at']
     
+    @staticmethod
+    def _last_msg(obj):
+        """Última mensagem não desfeita, buscada no máximo uma vez por conversa.
+
+        O viewset anota `_last_msg_*` via Subquery (zero queries extras);
+        sem anotação, cai numa query única memorizada no objeto.
+        """
+        if hasattr(obj, '_last_msg_type'):
+            if obj._last_msg_type is None:
+                return None
+            return SimpleNamespace(
+                message_type=obj._last_msg_type,
+                content=obj._last_msg_content,
+                created_at=obj._last_msg_created_at,
+            )
+        if not hasattr(obj, '_last_msg_cache'):
+            obj._last_msg_cache = obj.messages.filter(
+                is_unsent=False
+            ).order_by('-created_at').first()
+        return obj._last_msg_cache
+
     def get_last_message(self, obj):
-        last_msg = obj.messages.filter(is_unsent=False).order_by('-created_at').first()
+        last_msg = self._last_msg(obj)
         if last_msg:
             return {
                 'type': last_msg.message_type,
@@ -160,7 +183,7 @@ class InstagramConversationSerializer(serializers.ModelSerializer):
         return 'active' if obj.is_active else 'closed'
 
     def get_last_message_preview(self, obj):
-        last_msg = obj.messages.filter(is_unsent=False).order_by('-created_at').first()
+        last_msg = self._last_msg(obj)
         if not last_msg:
             return ''
         if last_msg.content:

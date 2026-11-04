@@ -5,6 +5,7 @@ from datetime import timedelta
 from urllib.parse import quote as urlquote
 
 from django.conf import settings
+from django.db.models import OuterRef, Subquery
 from django.contrib.auth import get_user_model
 from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
 from django.http import HttpResponseRedirect
@@ -24,6 +25,7 @@ from ..models import (
     InstagramInsight,
     InstagramLive,
     InstagramMedia,
+    InstagramMessage,
     InstagramProduct,
     InstagramScheduledPost,
 )
@@ -532,7 +534,14 @@ class InstagramConversationViewSet(viewsets.ModelViewSet):
         account_id = self.request.query_params.get("account")
         if account_id:
             queryset = queryset.filter(account_id=account_id)
-        return queryset
+        latest = InstagramMessage.objects.filter(
+            conversation=OuterRef('pk'), is_unsent=False
+        ).order_by('-created_at')
+        return queryset.annotate(
+            _last_msg_type=Subquery(latest.values('message_type')[:1]),
+            _last_msg_content=Subquery(latest.values('content')[:1]),
+            _last_msg_created_at=Subquery(latest.values('created_at')[:1]),
+        )
 
     def _resolve_own_account(self, account_id):
         if not account_id:
