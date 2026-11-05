@@ -787,6 +787,18 @@ def complete_print_job(job: StorePrintJob, *, printer_name: str = '', metadata: 
 # trabalho na fila da impressora. O agent relata isso como falha comum.
 _CANCELADO_NO_WINDOWS = re.compile(r'status=[^,]*\b(Deleting|Deleted)\b', re.IGNORECASE)
 
+# O agent espera 15 s o trabalho sair da fila do Windows. Lote grande (etiquetas)
+# demora mais, e o agent avisava "stayed in queue" como falha: o servidor
+# devolvia à fila e o lote 1 saía de novo depois do lote 2 (05/11). Os bytes já
+# estão no spooler e vão sair: é entregue. Só com erro da impressora é falha.
+_AINDA_NA_FILA = re.compile(r'stayed in queue after \d+s: status=([^\n]*?)(?:, document=|$)', re.IGNORECASE)
+_ERRO_NA_FILA = re.compile(r'Error|Offline|PaperOut|Blocked|UserIntervention|Deleting|Deleted', re.IGNORECASE)
+
+
+def _ainda_imprimindo(error_message: str) -> bool:
+    achado = _AINDA_NA_FILA.search(error_message or '')
+    return bool(achado) and not _ERRO_NA_FILA.search(achado.group(1))
+
 
 def fail_print_job(
     job: StorePrintJob,
@@ -798,6 +810,9 @@ def fail_print_job(
     if _CANCELADO_NO_WINDOWS.search(error_message or '') and job.status != StorePrintJob.JobStatus.CANCELLED:
         # Cancelado à mão na impressora: repetir era o loop de 28/10.
         job.cancel(f'Cancelado na fila da impressora ({error_message[:200]})')
+        return job
+    if _ainda_imprimindo(error_message) and job.status == StorePrintJob.JobStatus.CLAIMED:
+        job.complete(metadata={'aviso': f'Entregue; ainda na fila do Windows ao confirmar ({error_message[:200]})'})
         return job
     job.fail(
         error_message=error_message,

@@ -93,3 +93,41 @@ class CancelarImpressaoTests(APITestCase):
         self.assertIn(resp.status_code, (403, 404))
         job.refresh_from_db()
         self.assertEqual(job.status, StorePrintJob.JobStatus.PENDING)
+
+
+class LoteDemoradoNaoRepeteTests(CancelarImpressaoTests):
+    """05/11: dois lotes seguidos, o 1º saiu duas vezes. O agent espera 15 s o
+    trabalho sair da fila do Windows; lote grande demora mais e o agent avisava
+    "stayed in queue" como falha → servidor devolvia à fila → imprimia de novo.
+    Os bytes já estavam no spooler: é entregue, não falha."""
+
+    def test_ainda_imprimindo_na_fila_conta_como_entregue(self):
+        job = self._job()
+        job.claim(self.agent)
+        self._agente(f'/api/v1/stores/print/jobs/{job.id}/fail/', {
+            'error': 'Print job 31 stayed in queue after 15s: status=Printing, Retained, document=Etiquetas',
+            'retryable': True,
+        })
+        job.refresh_from_db()
+        self.assertEqual(job.status, StorePrintJob.JobStatus.COMPLETED)
+        self.assertIn('fila', job.metadata.get('aviso', ''))
+        # Não volta para o agent.
+        self.assertIsNone(self._agente('/api/v1/stores/print/agent/claim-next/').data['job'])
+
+    def test_na_fila_com_status_normal_tambem_conta_como_entregue(self):
+        job = self._job()
+        job.claim(self.agent)
+        self._agente(f'/api/v1/stores/print/jobs/{job.id}/fail/', {
+            'error': 'Print job 7 stayed in queue after 15s: status=Normal, document=Comanda', 'retryable': True,
+        })
+        job.refresh_from_db()
+        self.assertEqual(job.status, StorePrintJob.JobStatus.COMPLETED)
+
+    def test_parado_na_fila_com_erro_da_impressora_ainda_tenta_de_novo(self):
+        job = self._job()
+        job.claim(self.agent)
+        self._agente(f'/api/v1/stores/print/jobs/{job.id}/fail/', {
+            'error': 'Print job 7 stayed in queue after 15s: status=Error, Offline, document=Comanda', 'retryable': True,
+        })
+        job.refresh_from_db()
+        self.assertEqual(job.status, StorePrintJob.JobStatus.PENDING)
