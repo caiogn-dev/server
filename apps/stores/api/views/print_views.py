@@ -165,7 +165,7 @@ class StorePrintJobViewSet(viewsets.ReadOnlyModelViewSet):
     store_field = 'store'
 
     def get_queryset(self):
-        queryset = StorePrintJob.objects.select_related('store', 'order', 'claimed_by').order_by('-created_at')
+        queryset = StorePrintJob.objects.select_related('store', 'order', 'claimed_by', 'target_agent').order_by('-created_at')
         store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
         if store_param:
             queryset, _ = filter_by_store(queryset, store_param)
