@@ -281,3 +281,45 @@ class AvisosDaquiPraLaTests(Base):
 
     def test_aviso_de_pedido_desconhecido_e_ignorado(self, _imp, _conf):
         self.assertFalse(p99.aplicar_aviso(self.store, 'orderCancel', {'order_id': 1}))
+
+
+@mock.patch('apps.stores.services.pedidos_da_99.confirmar_depois')
+@mock.patch('apps.stores.services.pedidos_da_99.imprimir_depois')
+class NumeroDoPedidoTests(Base):
+    """O "#16" que o app da 99 e o entregador falam. Sem ele a loja não acha o
+    pedido no quadro quando o entregador chega (05/11: o #16 não apareceu)."""
+
+    def _numero(self, **mudancas):
+        pedido, _ = p99.receber_pedido_novo(self.store, _pedido_novo(**mudancas))
+        pedido.refresh_from_db()
+        return pedido.metadata['99food']['numero']
+
+    def test_numero_em_texto_vira_inteiro(self, _imp, _conf):
+        self.assertEqual(self._numero(order_index='16'), 16)
+
+    def test_numero_fora_do_order_info(self, _imp, _conf):
+        dados = _pedido_novo(order_index=None)
+        dados['order_index'] = 16
+        pedido, _ = p99.receber_pedido_novo(self.store, dados)
+        self.assertEqual(pedido.metadata['99food']['numero'], 16)
+
+    def test_numero_com_outro_nome_de_campo(self, _imp, _conf):
+        dados = _pedido_novo()
+        del dados['order_info']['order_index']
+        dados['order_info']['orderIndex'] = 16
+        pedido, _ = p99.receber_pedido_novo(self.store, dados)
+        self.assertEqual(pedido.metadata['99food']['numero'], 16)
+
+    def test_sem_numero_fica_vazio_e_nao_quebra(self, _imp, _conf):
+        dados = _pedido_novo()
+        del dados['order_info']['order_index']
+        pedido, _ = p99.receber_pedido_novo(self.store, dados)
+        self.assertIsNone(pedido.metadata['99food']['numero'])
+
+    def test_guarda_codigos_e_quem_entrega(self, _imp, _conf):
+        pedido, _ = p99.receber_pedido_novo(
+            self.store, _pedido_novo(takeaway_code='4321', delivery_type=1))
+        dados = pedido.metadata['99food']
+        self.assertEqual(dados['codigo_entrega'], '5000')
+        self.assertEqual(dados['codigo_retirada'], '4321')
+        self.assertEqual(dados['quem_entrega'], 'entregador da 99')

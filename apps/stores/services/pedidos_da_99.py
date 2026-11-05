@@ -195,6 +195,29 @@ def _endereco(cliente: dict, lat, lng) -> dict:
     }
 
 
+# O "#16" do app da 99. A doc chama de `order_index`, mas o 1º pedido real
+# (05/11) chegou ao painel sem número: lemos variações e o nível de fora também.
+_CHAVES_DO_NUMERO = (
+    'order_index', 'orderIndex', 'order_seq', 'daily_order_index', 'day_seq',
+    'order_number', 'display_order_id', 'short_order_id',
+)
+
+
+def numero_do_pedido(info: dict, dados: dict | None = None):
+    for fonte in (info, dados or {}, info.get('order') if isinstance(info.get('order'), dict) else {}):
+        for chave in _CHAVES_DO_NUMERO:
+            valor = fonte.get(chave)
+            if valor in (None, '', 0, '0'):
+                continue
+            texto = str(valor).strip().lstrip('#')
+            if texto.isdigit() and len(texto) <= 6:
+                return int(texto)
+    return None
+
+
+_QUEM_ENTREGA = {0: 'cliente retira', 1: 'entregador da 99', 2: 'entrega da loja'}
+
+
 def receber_pedido_novo(store, dados: dict):
     """Cria o pedido a partir do `orderNew`. Aviso repetido devolve o mesmo pedido."""
     from apps.stores.models import StoreOrder, StoreOrderItem
@@ -239,7 +262,9 @@ def receber_pedido_novo(store, dados: dict):
         if info.get('takeaway_code'):
             notas_entrega.append(f"Código de retirada: {info['takeaway_code']}")
 
-        numero = info.get('order_index')
+        numero = numero_do_pedido(info, dados)
+        if numero is None:
+            logger.warning('99food: pedido %s sem número curto; campos: %s', order_id, sorted(info.keys()))
         pedido = StoreOrder.objects.create(
             store=store,
             customer_name=nome[:255],
@@ -271,6 +296,9 @@ def receber_pedido_novo(store, dados: dict):
                     'delivery_type': int(info.get('delivery_type') or 0),
                     'pay_channel': info.get('pay_channel'),
                     'precisa_talher': bool(info.get('need_cutlery')),
+                    'quem_entrega': _QUEM_ENTREGA.get(int(info.get('delivery_type') or 0), ''),
+                    'codigo_entrega': str(info.get('handover_code') or ''),
+                    'codigo_retirada': str(info.get('takeaway_code') or ''),
                     'confirmado': False,
                 },
             },

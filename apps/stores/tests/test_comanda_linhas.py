@@ -252,3 +252,21 @@ def test_forma_de_pagamento_tem_o_nome_do_catalogo_unico():
     for metodo, nome in formas_de_pagamento.ROTULOS.items():
         assert comanda_linhas._FORMAS[metodo] == nome
     assert formas_de_pagamento.rotulo('sem_cobranca') == 'Sem cobrança'
+
+
+class TestComanda99:
+    """Pedido da 99: o número grande é o da 99 (#16), que é o que o entregador fala."""
+
+    def test_numero_grande_e_o_da_99(self):
+        payload = _payload(order={'source': '99food', 'numero_99': 16})
+        linhas = cl.linhas_da_comanda(payload, cl.layout_padrao())
+        textos = _textos(linhas)
+        grandes = [l['texto'] for l in linhas if l.get('altura_dupla')]
+        assert any('99 #16' in t for t in grandes), grandes
+        assert any('Pedido CE-2610225590' in t for t in textos)
+        assert any('via 99Food' in t for t in textos)
+
+    def test_sem_numero_da_99_fica_o_curto_de_sempre(self):
+        payload = _payload(order={'source': '99food', 'numero_99': None})
+        grandes = [l['texto'] for l in cl.linhas_da_comanda(payload, cl.layout_padrao()) if l.get('altura_dupla')]
+        assert any('#5590' in t for t in grandes), grandes

@@ -609,6 +609,7 @@ def payload_do_pedido(order: StoreOrder, *, template: str) -> dict:
             # Canal de origem: WhatsApp, PDV e site se comportam diferente
             # quando dá problema, e a cozinha lê isso na comanda.
             'source': order.source or '',
+            'numero_99': ((order.metadata or {}).get('99food') or {}).get('numero') if order.source == '99food' else None,
             'coupon_code': order.coupon_code or '',
             'customer_notes': order.customer_notes or '',
             'internal_notes': _notas_da_loja(order),
