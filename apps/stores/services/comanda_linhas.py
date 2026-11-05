@@ -229,8 +229,10 @@ _SITUACAO = {'failed': 'PAGAMENTO FALHOU', 'refunded': 'REEMBOLSADO'}
 _CANAIS = {
     'whatsapp': 'WhatsApp', 'instagram': 'Instagram', 'pdv': 'PDV', 'balcao': 'balcão',
     'web': 'site', 'site': 'site', 'storefront': 'site', 'payment_link': 'link de pagamento',
-    '99food': '99Food',
+    '99food': '99Food', 'ifood': 'iFood',
 }
+# Pedido de app: o número grande é o do app, que é o que o entregador fala.
+_PREFIXO_DO_APP = {'99food': '99', 'ifood': 'iFood'}
 _AVISO_MAQUININHA = 'LEVAR MAQUININHA'
 
 
@@ -307,9 +309,9 @@ def _bloco_numero(p: _Papel, payload: dict, layout: dict) -> list[dict]:
     order = payload.get('order') or {}
     numero = str(order.get('order_number') or '')
     curto, modo = _numero_curto(numero), _modo(order)
-    if order.get('source') == '99food' and order.get('numero_99'):
-        # O entregador da 99 chega falando "pedido 16", não o nosso número.
-        curto = f"99 #{order['numero_99']}"
+    prefixo = _PREFIXO_DO_APP.get(order.get('source') or '')
+    if prefixo and order.get('numero_do_app'):
+        curto = f"{prefixo} #{order['numero_do_app']}"
     grande = {'negrito': True, 'altura_dupla': True, 'largura_dupla': True}
     if len(curto) + 1 + len(modo) <= p.largura(True):
         linhas = [p.duas_colunas(curto, modo, **grande)]

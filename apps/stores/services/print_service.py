@@ -520,6 +520,14 @@ def build_order_print_payload(
     return _com_escpos(payload_do_pedido(order, template=template), order.store, layout)
 
 
+def _numero_do_app(order):
+    if order.source not in ('99food', 'ifood'):
+        return None
+    metadata = order.metadata if isinstance(order.metadata, dict) else {}
+    dados = metadata.get(order.source)
+    return dados.get('numero') if isinstance(dados, dict) else None
+
+
 def payload_do_pedido(order: StoreOrder, *, template: str) -> dict:
     # Combos ligados a uma linha de item são pulados no loop de combos abaixo
     # (evita duplicar a linha), então os sabores escolhidos precisam entrar
@@ -609,7 +617,8 @@ def payload_do_pedido(order: StoreOrder, *, template: str) -> dict:
             # Canal de origem: WhatsApp, PDV e site se comportam diferente
             # quando dá problema, e a cozinha lê isso na comanda.
             'source': order.source or '',
-            'numero_99': ((order.metadata or {}).get('99food') or {}).get('numero') if order.source == '99food' else None,
+            # "#16" do app de entrega (99Food, iFood), gravado em metadata[source].
+            'numero_do_app': _numero_do_app(order),
             'coupon_code': order.coupon_code or '',
             'customer_notes': order.customer_notes or '',
             'internal_notes': _notas_da_loja(order),

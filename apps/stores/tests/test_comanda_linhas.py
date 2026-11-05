@@ -258,7 +258,7 @@ class TestComanda99:
     """Pedido da 99: o número grande é o da 99 (#16), que é o que o entregador fala."""
 
     def test_numero_grande_e_o_da_99(self):
-        payload = _payload(order={'source': '99food', 'numero_99': 16})
+        payload = _payload(order={'source': '99food', 'numero_do_app': 16})
         linhas = cl.linhas_da_comanda(payload, cl.layout_padrao())
         textos = _textos(linhas)
         grandes = [l['texto'] for l in linhas if l.get('altura_dupla')]
@@ -267,6 +267,13 @@ class TestComanda99:
         assert any('via 99Food' in t for t in textos)
 
     def test_sem_numero_da_99_fica_o_curto_de_sempre(self):
-        payload = _payload(order={'source': '99food', 'numero_99': None})
+        payload = _payload(order={'source': '99food', 'numero_do_app': None})
         grandes = [l['texto'] for l in cl.linhas_da_comanda(payload, cl.layout_padrao()) if l.get('altura_dupla')]
         assert any('#5590' in t for t in grandes), grandes
+
+    def test_ifood_tambem_tem_numero_grande(self):
+        payload = _payload(order={'source': 'ifood', 'numero_do_app': 4821})
+        linhas = cl.linhas_da_comanda(payload, cl.layout_padrao())
+        grandes = [l['texto'] for l in linhas if l.get('altura_dupla')]
+        assert any('iFood #4821' in t for t in grandes), grandes
+        assert any('via iFood' in t for t in _textos(linhas))
