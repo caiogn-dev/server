@@ -55,13 +55,17 @@ def totais(loja, janela: Janela, incluir_teste=False) -> dict:
         ticket_medio=media_de_venda(),
         frete=Sum('delivery_fee'),
         desconto=Sum('discount'),
+        desconto_plataforma=Sum('platform_discount'),
     )
+    desconto_plataforma = _decimal(agg['desconto_plataforma'])
     return {
         'receita': _decimal(agg['receita']),
         'pedidos': agg['pedidos'] or 0,
         'ticket_medio': _decimal(agg['ticket_medio']),
         'frete': _decimal(agg['frete']),
-        'desconto': _decimal(agg['desconto']),
+        # Desconto que a LOJA deu; o pago pelo app de entrega vem à parte.
+        'desconto': _decimal(agg['desconto']) - desconto_plataforma,
+        'desconto_plataforma': desconto_plataforma,
     }
 
 

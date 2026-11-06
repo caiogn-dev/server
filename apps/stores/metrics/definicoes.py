@@ -42,6 +42,11 @@ def valor_de_venda():
 
     Desconto, taxa, acréscimo e vale continuam dentro: são do preço da venda.
 
+    Desconto pago pelo app de entrega (`platform_discount`, 99Food/iFood) volta
+    para a venda: o pedido de R$ 39,99 que a 99 subsidiou e o cliente pagou
+    R$ 8,00 é venda de R$ 39,99 (plano 06/11, item 1.4). O `total` fica 8,00
+    porque é o que o caixa recebe do cliente.
+
     O que CONTINUA com `total` (dinheiro que de fato entra, frete incluso):
     gaveta de caixa, "a receber", cobrança/pagamento (`amount_due`,
     `amount_paid`, StorePayment) e a quebra "como entrou o dinheiro".
@@ -49,7 +54,9 @@ def valor_de_venda():
     Uso: `qs.aggregate(receita=soma_de_venda())` ou
     `qs.annotate(venda=valor_de_venda())`.
     """
-    return ExpressionWrapper(F('total') - F('delivery_fee'), output_field=_DINHEIRO)
+    return ExpressionWrapper(
+        F('total') - F('delivery_fee') + F('platform_discount'), output_field=_DINHEIRO,
+    )
 
 
 def soma_de_venda(**extra):
