@@ -185,6 +185,12 @@ app.conf.beat_schedule = {
         'task': 'apps.stores.tasks.rodar_vigias',
         'schedule': 600.0,  # 10 min
     },
+    # 99Food: recebido de cada pedido pela API financeira (7 dias até ontem).
+    # 06:00 em America/Sao_Paulo (CELERY_TIMEZONE); idempotente.
+    'conciliar-repasse-da-99': {
+        'task': 'apps.stores.tasks.conciliar_repasse_da_99',
+        'schedule': crontab(hour=6, minute=0),
+    },
     # Billing: ciclo de vida de assinaturas — diário às 4h
     'enforce-subscription-lifecycle': {
         'task': 'stores.enforce_subscription_lifecycle',

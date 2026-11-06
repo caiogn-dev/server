@@ -215,6 +215,7 @@ from .api.analytics_views import (
     StaffReportView, OverviewReportView, MenuMatrixReportView, CohortReportView,
     StoreScoreView,
 )
+from .api.repasse_99_views import ImportarExtrato99View
 from .api.payment_views import (
     StorePaymentViewSet, StorePaymentGatewayViewSet, StorePaymentWebhookEventViewSet
 )
@@ -499,6 +500,7 @@ urlpatterns = [
     path('reports/carrinhos-abandonados/', CarrinhosAbandonadosView.as_view(), name='carrinhos-abandonados-report'),
     path('reports/abc/', AbcReportView.as_view(), name='abc-report'),
     path('reports/channels/', ChannelsReportView.as_view(), name='channels-report'),
+    path('reports/99food/extrato/', ImportarExtrato99View.as_view(), name='importar-extrato-99'),
     path('reports/geography/', GeographyReportView.as_view(), name='geography-report'),
     path('reports/sla/', SlaReportView.as_view(), name='sla-report'),
     path('reports/finance/', FinanceReportView.as_view(), name='finance-report'),
