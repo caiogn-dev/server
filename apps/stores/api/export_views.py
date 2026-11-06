@@ -222,6 +222,31 @@ class OrdersExportView(BaseExportView):
         )
 
 
+def _vendas_para_json(v):
+    ticket = v['ticket_medio']
+    return {
+        'pedidos': v['pedidos'],
+        'pagos': v['pagos'],
+        'cancelados': v['cancelados'],
+        'cancelados_pct': v['cancelados_pct'],
+        'reembolsados': v['reembolsados'],
+        'faturamento': f"{v['faturamento']:.2f}",
+        'frete': f"{v['frete']:.2f}",
+        'ticket_medio': f'{ticket:.2f}' if ticket is not None else None,
+        'por_status': v['por_status'],
+        'por_dia': [
+            {
+                'date': d['data'].isoformat(),
+                'pedidos': d['pedidos'],
+                'pagos': d['pagos'],
+                'cancelados': d['cancelados'],
+                'faturamento': f"{d['faturamento']:.2f}",
+            }
+            for d in v['por_dia']
+        ],
+    }
+
+
 class RevenueReportView(BaseExportView):
     """Revenue report with aggregations."""
     
@@ -286,7 +311,11 @@ class RevenueReportView(BaseExportView):
                     'total_discounts': float(item['total_discounts'] or 0)
                 }
                 for item in revenue_data
-            ]
+            ],
+            # Volume e dinheiro na MESMA janela, pela régua do Histórico de
+            # pedidos. Antes os cards de pedidos/cancelados/status liam
+            # `core/dashboard/charts/?days=N`, que ignorava o período escolhido.
+            'vendas': _vendas_para_json(metrics.vendas_do_periodo(store, janela)),
         })
 
 
