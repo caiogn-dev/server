@@ -15,6 +15,9 @@ Três responsabilidades, três módulos:
 - `definicoes`  o que conta como receita, quanto dela é venda (sem frete) e por qual data
 - `janelas`     que intervalo é esse, sempre no fuso da loja
 - `series`      como isso se distribui no tempo e entre produtos
+- `indicadores` os números que várias telas mostram (clientes novos, esperando
+                resposta, itens para repor, entrega de campanha, média de
+                referência, ranking de produtos, tempos de operação)
 
 Por que existe: seis arquivos calculavam faturamento por conta própria e
 davam respostas diferentes para o mesmo dia. O card da home chegou a mostrar
@@ -45,6 +48,17 @@ from .janelas import (
     mes_corrente,
     ontem,
     ultimos_dias,
+)
+from . import indicadores
+from .indicadores import (
+    clientes_novos,
+    esperando_resposta,
+    itens_para_repor,
+    media_de_referencia,
+    percentil,
+    ranking_de_produtos,
+    receita_pedidos,
+    taxa_de_entrega,
 )
 from .series import (
     comparar_periodo,
@@ -81,6 +95,16 @@ __all__ = [
     'mes_corrente',
     'ontem',
     'ultimos_dias',
+    # indicadores (uma definição por número que aparece em mais de uma tela)
+    'indicadores',
+    'clientes_novos',
+    'esperando_resposta',
+    'itens_para_repor',
+    'media_de_referencia',
+    'percentil',
+    'ranking_de_produtos',
+    'receita_pedidos',
+    'taxa_de_entrega',
     # séries
     'comparar_periodo',
     'contagem_operacional',

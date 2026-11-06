@@ -1336,9 +1336,20 @@ class StoreCustomerViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             total=Count('id'),
             active=Count('id', filter=Q(is_active=True)),
             with_orders=Count('id', filter=Q(total_orders__gt=0)),
-            total_revenue=Sum('total_spent'),
         )
-        revenue = agg['total_revenue'] or Decimal('0.00')
+        # Receita pela régua única (a do Histórico/Pagamentos), não pela soma
+        # de `total_spent` dos cadastros: esse número fica velho (fusão soma
+        # os dois lados, pedido sem cadastro não entra) e a tela de Clientes
+        # mostrava R$ 26.173,08 contra R$ 25.664,50 de Pagamentos (Cê, 06/11).
+        from apps.stores.metrics.indicadores import receita_pedidos
+
+        # Mesmo recorte do queryset de clientes: lojas do usuário e, com
+        # `?store=`, só aquela (loja com pedido e sem cadastro também conta).
+        pedidos = StoreOrder.objects.filter(store_id__in=self._get_user_store_ids())
+        store_param = self.kwargs.get('store_pk') or request.query_params.get('store')
+        if store_param:
+            pedidos, _ = filter_by_store(pedidos, store_param)
+        revenue = receita_pedidos(pedidos)
         return Response({
             'total': agg['total'],
             'active': agg['active'],

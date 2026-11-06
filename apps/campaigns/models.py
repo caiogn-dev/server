@@ -108,10 +108,15 @@ class Campaign(models.Model):
         return f"{self.name} ({self.status})"
     
     @property
-    def delivery_rate(self) -> float:
-        if self.messages_sent == 0:
-            return 0
-        return (self.messages_delivered / self.messages_sent) * 100
+    def delivery_rate(self) -> float | None:
+        """Entregues ÷ público total (régua única do painel). None sem público.
+
+        Era entregues ÷ enviadas: 30 de 561 enviadas e entregues apareciam
+        como "100% entregues".
+        """
+        from apps.stores.metrics.indicadores import taxa_de_entrega
+
+        return taxa_de_entrega(self.messages_delivered, self.total_recipients)
     
     @property
     def read_rate(self) -> float:

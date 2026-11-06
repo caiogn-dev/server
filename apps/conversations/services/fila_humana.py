@@ -42,6 +42,7 @@ def _item(conversa, agora) -> dict:
         'minutos_esperando': op.segundos_desde(desde, agora) // 60,
         'ultima_mensagem': (getattr(conversa, 'anno_last_text', '') or '')[:160],
         'atendente': op.atendente(conversa),
+        'modo': conversa.mode,
     }
 
 
@@ -60,12 +61,23 @@ def montar_fila(conversas, agora=None) -> dict:
     """`conversas`: queryset já restrito ao que o usuário pode ver."""
     from apps.conversations.models import Conversation
 
+    from apps.stores.metrics.indicadores import esperando_resposta
+
     agora = agora or timezone.now()
     hoje = timezone.localtime(agora).date()
-    esperando, em_atendimento = [], []
+    # "Esperando" é a régua única do painel (Início, Conversas e esta tela):
+    # cliente falou por último, sem resposta, nas últimas 48 h — em qualquer
+    # modo. Conversa do bot que ficou sem resposta também precisa de uma
+    # pessoa. Antes: só modo humano e sem janela (o card mostrava 23 com
+    # gente de uma semana atrás; a lista cortava em 24 h e mostrava 10).
+    esperando_ids = set()
+    esperando = []
+    for conversa in esperando_resposta(conversas, agora):
+        esperando_ids.add(conversa.pk)
+        esperando.append(_item(conversa, agora))
+    em_atendimento = []
     for conversa in conversas.filter(mode=Conversation.ConversationMode.HUMAN):
-        if _esta_esperando(conversa):
-            esperando.append(_item(conversa, agora))
+        if conversa.pk in esperando_ids or _esta_esperando(conversa):
             continue
         marco = ultima_atividade_humana(conversa)
         # Humana parada de outro dia não é fila: volta ao bot na próxima

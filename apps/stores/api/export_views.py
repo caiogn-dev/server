@@ -303,16 +303,16 @@ class ProductsReportView(BaseExportView):
         # Get order items for the period
         from ..models import StoreOrderItem
         
-        items = itens_de_receita(loja=store).filter(
-            order__created_at__date__gte=start_date,
-            order__created_at__date__lte=end_date,
-        ).values(
-            'product_id', 'product_name'
-        ).annotate(
-            total_quantity=Sum('quantity'),
-            total_revenue=Sum('subtotal'),
-            order_count=Count('order', distinct=True)
-        ).order_by('-total_quantity')[:50]
+        # Um produto, uma linha: agrupava por (id, nome gravado) e o prato
+        # renomeado aparecia duas vezes. Régua única em metrics.indicadores.
+        from apps.stores.metrics.indicadores import ranking_de_produtos
+        items = ranking_de_produtos(
+            itens_de_receita(loja=store).filter(
+                order__created_at__date__gte=start_date,
+                order__created_at__date__lte=end_date,
+            ),
+            ordenar_por='quantidade', limite=50,
+        )
         
         # Stock info
         products = StoreProduct.objects.filter(
@@ -320,7 +320,7 @@ class ProductsReportView(BaseExportView):
             status='active'
         ).values('id', 'name', 'stock_quantity', 'price')
         
-        stock_map = {p['id']: p for p in products}
+        stock_map = {str(p['id']): p for p in products}
         
         return Response({
             'period': {
@@ -329,12 +329,12 @@ class ProductsReportView(BaseExportView):
             },
             'top_products': [
                 {
-                    'product_id': str(item['product_id']) if item['product_id'] else None,
-                    'product_name': item['product_name'],
-                    'total_quantity': item['total_quantity'],
-                    'total_revenue': float(item['total_revenue'] or 0),
-                    'order_count': item['order_count'],
-                    'current_stock': stock_map.get(item['product_id'], {}).get('stock_quantity')
+                    'product_id': item['produto_id'],
+                    'product_name': item['nome'],
+                    'total_quantity': item['quantidade'],
+                    'total_revenue': float(item['receita'] or 0),
+                    'order_count': item['pedidos'],
+                    'current_stock': stock_map.get(item['produto_id'], {}).get('stock_quantity')
                 }
                 for item in items
             ]
@@ -416,20 +416,23 @@ class CustomersReportView(BaseExportView):
             avg_order_value=media_de_venda()
         ).order_by('-total_spent')[:50]
         
-        # New vs returning customers
-        all_customers = StoreOrder.objects.filter(
-            store=store,
-            created_at__date__gte=start_date,
-            created_at__date__lte=end_date
-        ).values('customer_email').distinct().count()
-        
-        returning = StoreOrder.objects.filter(
-            store=store,
-            created_at__date__gte=start_date,
-            created_at__date__lte=end_date
-        ).values('customer_email').annotate(
-            order_count=Count('id')
-        ).filter(order_count__gt=1).count()
+        # Novos x recorrentes. "Novo" = primeira compra paga no período, régua
+        # única (metrics.indicadores). Antes: quem pediu 1x no período — cliente
+        # antigo com um pedido no mês virava "novo" (67 aqui, 60 na Visão geral).
+        from apps.stores.metrics.indicadores import clientes_novos
+        from apps.stores.metrics.indicadores import identidade_do_cliente
+        all_customers = (
+            self.revenue_queryset(
+                store,
+                created_at__date__gte=start_date,
+                created_at__date__lte=end_date,
+            )
+            .annotate(_quem=identidade_do_cliente())
+            .exclude(_quem=None)
+            .values('_quem').distinct().count()
+        )
+        novos = clientes_novos(store, start_date, end_date)
+        returning = max(all_customers - novos, 0)
         
         return Response({
             'period': {
@@ -438,7 +441,7 @@ class CustomersReportView(BaseExportView):
             },
             'summary': {
                 'total_customers': all_customers,
-                'new_customers': all_customers - returning,
+                'new_customers': novos,
                 'returning_customers': returning,
                 'retention_rate': round((returning / all_customers * 100) if all_customers > 0 else 0, 2)
             },
@@ -606,11 +609,10 @@ class StoreDashboardStatsView(BaseExportView):
         ).count()
         
         # Low stock products
-        low_stock = StoreProduct.objects.filter(
-            store=store,
-            status='active',
-            stock_quantity__lte=10
-        ).count()
+        # Régua única: contava `estoque <= 10` sem olhar se o produto controla
+        # estoque nem o mínimo dele — 29 na Visão geral contra 6 em Produtos.
+        from apps.stores.metrics.indicadores import itens_para_repor
+        low_stock = itens_para_repor(StoreProduct.objects.filter(store=store)).count()
         
         return Response({
             'today': {
@@ -718,15 +720,13 @@ class SaladasReportView(BaseExportView):
 
         # Top produtos via StoreOrderItem
         from apps.stores.models.order import StoreOrderItem
-        top_products_qs = (
-            StoreOrderItem.objects.filter(order__in=paid_orders)
-            .values('product_name')
-            .annotate(quantity=Sum('quantity'), revenue=Sum('subtotal'))
-            .order_by('-quantity')[:10]
-        )
+        from apps.stores.metrics.indicadores import ranking_de_produtos
         top_products = [
-            {'name': p['product_name'], 'quantity': p['quantity'], 'revenue': float(p['revenue'] or 0)}
-            for p in top_products_qs
+            {'name': p['nome'], 'quantity': p['quantidade'], 'revenue': float(p['receita'] or 0)}
+            for p in ranking_de_produtos(
+                StoreOrderItem.objects.filter(order__in=paid_orders),
+                ordenar_por='quantidade', limite=10,
+            )
         ]
 
         # Receita por categoria
@@ -749,17 +749,9 @@ class SaladasReportView(BaseExportView):
         # Clientes novos vs recorrentes
         period_phones = list(paid_orders.values_list('customer_phone', flat=True).distinct())
         total_period_customers = len(period_phones)
-        returning = (
-            self.revenue_queryset(
-                store,
-                customer_phone__in=period_phones,
-                created_at__date__lt=start,
-            )
-            .values('customer_phone')
-            .distinct()
-            .count()
-        )
-        new_customers = max(total_period_customers - returning, 0)
+        from apps.stores.metrics.indicadores import clientes_novos
+        new_customers = clientes_novos(store, start, end)
+        returning = max(total_period_customers - new_customers, 0)
 
         # Top clientes por gasto
         top_customers_qs = (

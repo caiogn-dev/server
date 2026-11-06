@@ -253,20 +253,20 @@ def top_produtos(loja, janela: Janela, limite=10, incluir_teste=False) -> list:
     """Produtos que mais faturaram no período."""
     from .definicoes import itens_de_receita
 
-    linhas = (
+    from .indicadores import ranking_de_produtos
+
+    linhas = ranking_de_produtos(
         itens_de_receita(
             loja=loja, inicio=janela.inicio, fim=janela.fim, incluir_teste=incluir_teste,
-        )
-        .values('product_id', 'product__name')
-        .annotate(receita=Sum('subtotal'), unidades=Sum('quantity'))
-        .order_by('-receita')[:limite]
+        ),
+        limite=limite,
     )
     return [
         {
-            'produto_id': linha['product_id'],
-            'nome': linha['product__name'],
+            'produto_id': linha['produto_id'],
+            'nome': linha['nome'],
             'receita': _decimal(linha['receita']),
-            'unidades': linha['unidades'] or 0,
+            'unidades': linha['quantidade'],
         }
         for linha in linhas
     ]

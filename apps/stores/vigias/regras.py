@@ -23,6 +23,7 @@ from django.utils import timezone
 from django.utils.text import slugify
 
 from apps.stores.metrics.definicoes import STATUS_SEM_RECEITA, _q_pedido_de_teste, itens_de_receita, pedidos_de_receita
+from apps.stores.metrics.indicadores import media_de_referencia, variacao_pct
 
 DIAS_CURTOS = ('seg', 'ter', 'qua', 'qui', 'sex', 'sáb', 'dom')
 DIAS_PLURAL = ('segundas', 'terças', 'quartas', 'quintas', 'sextas', 'sábados', 'domingos')
@@ -107,20 +108,27 @@ def resumo_da_manha(loja, agora: datetime) -> list[Fato]:
 
     n = por_dia[dia]['pedidos']
     receita = por_dia[dia]['receita']
-    base = [por_dia[d]['pedidos'] for d in (dia - timedelta(days=7 * k) for k in range(1, 5)) if d in por_dia]
+    # A média de referência é a MESMA do resumo da IA no Início
+    # (metrics.indicadores.media_de_referencia): receita das 4 mesmas
+    # dias-da-semana anteriores, dia sem venda = zero. Antes o vigia comparava
+    # PEDIDOS (só dias com venda) e a IA, receita por data de pagamento em 28
+    # dias — "36% acima" e "bem abaixo" da média no mesmo dia.
+    ref = media_de_referencia(loja, dia)
+    base = [d for d in ref['dias'] if date.fromisoformat(d) in por_dia]
 
     rotulo = 'Ontem' if dia == hoje - timedelta(days=1) else dia_curto(dia).capitalize()
     partes = [f'{rotulo}: {_plural(n, "pedido", "pedidos")}, {brl(receita)}']
     variacao = None
     if len(base) >= 2:
-        media = statistics.mean(base)
-        variacao = round((n - media) / media * 100)
+        pct = variacao_pct(receita, ref['receita'])
+        variacao = round(pct) if pct is not None else None
+    if variacao is not None:
         plural = DIAS_PLURAL[dia.weekday()]
         if abs(variacao) < 10:
             partes[0] += f' — normal para as {plural}' if dia.weekday() < 5 else f' — normal para os {plural}'
         else:
             lado = 'acima' if variacao > 0 else 'abaixo'
-            partes[0] += f' — {abs(variacao)}% {lado} da média das últimas {len(base)} {plural}'
+            partes[0] += f' — {abs(variacao)}% {lado} da média das {ref["janela"]} ({brl(ref["receita"])})'
 
     unidades: dict = defaultdict(int)
     for d, produto, qtd, _, _ in _itens(loja, dia, dia):
@@ -134,7 +142,7 @@ def resumo_da_manha(loja, agora: datetime) -> list[Fato]:
         tipo='resumo', chave=f'resumo:{dia.isoformat()}', grupo='resumo',
         titulo=f'Resumo de {dia_curto(dia)}', texto='. '.join(partes) + '.', prioridade=10,
         dados={'dia': dia.isoformat(), 'pedidos': n, 'receita': str(receita),
-               'base_dias': len(base), 'base_media': round(statistics.mean(base), 1) if base else None,
+               'base_dias': len(base), 'base_media': str(ref['receita']), 'base_janela': ref['janela'],
                'variacao_pct': variacao, 'mais_vendidos': [{'produto': p, 'qtd': q} for p, q in top]},
     )]
 
