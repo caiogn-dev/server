@@ -56,6 +56,7 @@ from .series import (
     top_produtos,
     totais,
 )
+from .vendas import recorte_do_historico, vendas_do_periodo
 
 __all__ = [
     # definições
@@ -90,4 +91,7 @@ __all__ = [
     'serie_temporal',
     'top_produtos',
     'totais',
+    # vendas do período (relatório de Vendas, mesma régua do Histórico)
+    'recorte_do_historico',
+    'vendas_do_periodo',
 ]
