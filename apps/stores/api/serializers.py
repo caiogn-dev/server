@@ -1270,6 +1270,12 @@ class StoreOrderCreateSerializer(serializers.Serializer):
         if not store:
             raise serializers.ValidationError({'store': 'Store not found'})
 
+        # Rota aninhada manda: /stores/<loja>/orders/ com outra loja no corpo
+        # gravava a venda na loja do corpo. A venda é da loja da URL.
+        url_store = view.kwargs.get('store_pk') if view else None
+        if url_store and str(url_store) not in (str(store.id), store.slug):
+            raise serializers.ValidationError({'store': 'A loja do pedido não é a loja desta tela.'})
+
         if request and request.user.is_authenticated:
             from apps.stores.permissions import has_store_permission
             if not has_store_permission(request.user, store, 'orders'):

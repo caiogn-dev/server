@@ -219,6 +219,26 @@ class StoreProductViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                     pass
         return super().initialize_request(request, *args, **kwargs)
 
+    def list(self, request, *args, **kwargs):
+        """Cardápio é sempre de UMA loja.
+
+        Sem `store`, a rota plana devolvia o catálogo de todas as lojas do
+        usuário misturado — o PDV da Cê vendia prato do Agrião, da Ivoneth e
+        da Pastita (06/11). Loja sem acesso é 404, como o resto do painel.
+        """
+        if not self.kwargs.get('store_pk'):
+            identificador = str(request.query_params.get('store') or '').strip()
+            if not identificador:
+                return Response({'store': 'Informe a loja.'}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                uuid_module.UUID(identificador)
+                loja = Store.objects.filter(pk=identificador).first()
+            except (ValueError, AttributeError):
+                loja = Store.objects.filter(slug=identificador).first()
+            if not loja or not user_can_access_store(request.user, loja):
+                raise Http404
+        return super().list(request, *args, **kwargs)
+
     def get_queryset(self):
         qs = super().get_queryset()  # StoreQuerysetMixin handles owner/staff scoping
         store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
