@@ -79,6 +79,9 @@ class TestDisparar:
         assert CampaignService()._personalize_message(campanha.message_content['text'], {'nome': 'Ana'}).startswith('Oi, Ana!')
         assert campanha.recipients.count() == 2
         assert campanha.metadata['promo_do_dia'] == '2026-09-29'
+        # o nome é lido pelo lojista: data em dd/mm/aaaa, nunca ISO
+        assert campanha.name.endswith('29/09/2026')
+        assert '2026-09-29' not in campanha.name
         # de novo no mesmo dia: não duplica
         assert promo_do_dia.disparar(loja, SEGUNDA_18H) == (None, 'ja_saiu')
 

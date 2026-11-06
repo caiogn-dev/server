@@ -1420,6 +1420,8 @@ class CheckoutService:
                         stock_quantity=F('stock_quantity') - item.quantity,
                         sold_count=F('sold_count') + item.quantity
                     )
+                    from apps.stores.services.pausa_por_estoque import pausar_se_zerou
+                    pausar_se_zerou([item.product.id])
                     # Estoque a nível de produto mudou → o cardápio cacheado do
                     # agente (nota [ESGOTADO]/[últimas N]) precisa ser invalidado.
                     # O .update()/F() acima NÃO dispara post_save, então a
@@ -2964,6 +2966,8 @@ class CheckoutService:
                         stock_quantity=F('stock_quantity') + item.quantity,
                         sold_count=Greatest(F('sold_count') - item.quantity, 0)
                     )
+                    from apps.stores.services.pausa_por_estoque import retomar_se_repos
+                    retomar_se_repos([item.product.id])
         for combo_item in order.combo_items.select_related('combo'):
             if combo_item.combo_id and combo_item.combo.track_stock:
                 StoreCombo.objects.filter(id=combo_item.combo_id).update(
@@ -2986,6 +2990,8 @@ class CheckoutService:
                         stock_quantity=F('stock_quantity') - item.quantity,
                         sold_count=F('sold_count') + item.quantity,
                     )
+                    from apps.stores.services.pausa_por_estoque import pausar_se_zerou
+                    pausar_se_zerou([item.product.id])
         for combo_item in order.combo_items.select_related('combo'):
             if combo_item.combo_id and combo_item.combo.track_stock:
                 StoreCombo.objects.filter(id=combo_item.combo_id).update(

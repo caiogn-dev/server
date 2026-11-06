@@ -85,11 +85,15 @@ def _mover(group_selections, quantidade_de_combos: int, sinal: int) -> bool:
                 stock_quantity=F('stock_quantity') - qtd,
                 sold_count=F('sold_count') + qtd,
             )
+            from apps.stores.services.pausa_por_estoque import pausar_se_zerou
+            pausar_se_zerou([produto.id])
         else:
             StoreProduct.objects.filter(id=produto.id).update(
                 stock_quantity=F('stock_quantity') + qtd,
                 sold_count=Greatest(F('sold_count') - qtd, 0),
             )
+            from apps.stores.services.pausa_por_estoque import retomar_se_repos
+            retomar_se_repos([produto.id])
     return any(v is None for _, v, _ in linhas)
 
 

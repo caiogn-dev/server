@@ -648,9 +648,20 @@ class CampaignService:
         text: str,
         variables: Dict[str, Any],
     ) -> str:
-        """Personalize message text with variables."""
+        """Personalize message text with variables.
+
+        Aceita `{{chave}}` (formato da campanha) e `{chave}` para os apelidos de
+        nome (`nome`, `customer_name`, `primeiro_nome`) — mensagens antigas
+        escritas de qualquer jeito continuam saindo preenchidas.
+        """
+        from apps.automation.variaveis import com_apelidos_de_nome
+
+        variables = com_apelidos_de_nome(variables or {})
         for key, value in variables.items():
             text = text.replace(f'{{{{{key}}}}}', str(value))
+        for key in ('nome', 'customer_name', 'primeiro_nome'):
+            if key in variables:
+                text = text.replace(f'{{{key}}}', str(variables[key]))
         return text
     
     # Contact List methods
