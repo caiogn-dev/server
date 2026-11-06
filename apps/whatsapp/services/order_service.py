@@ -191,6 +191,8 @@ class WhatsAppOrderService:
                         stock_quantity=F('stock_quantity') - item_data['quantity'],
                         sold_count=F('sold_count') + item_data['quantity'],
                     )
+                    from apps.stores.services.pausa_por_estoque import pausar_se_zerou
+                    pausar_se_zerou([product.id])
 
             # 5. Processa pagamento conforme método escolhido
             if payment_method == 'pix':

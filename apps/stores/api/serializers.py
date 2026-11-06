@@ -606,7 +606,7 @@ class StoreProductSerializer(serializers.ModelSerializer):
             'preco_vigente', 'em_promocao',
             'is_on_sale', 'discount_percentage',
             'track_stock', 'stock_quantity', 'low_stock_threshold',
-            'allow_backorder', 'is_low_stock', 'is_in_stock',
+            'allow_backorder', 'pausar_ao_zerar', 'is_brinde', 'is_low_stock', 'is_in_stock',
             'paused_until', 'is_paused', 'regras_de_venda',
             'status', 'featured',
             'main_image', 'main_image_url', 'images',
@@ -684,6 +684,7 @@ class StoreProductCreateSerializer(serializers.ModelSerializer):
             # sido escrita direto no banco. Nunca deu para cadastrar pelo painel.
             'promo_price', 'promo_weekday', 'regras_de_venda',
             'track_stock', 'stock_quantity', 'low_stock_threshold', 'allow_backorder',
+            'pausar_ao_zerar', 'is_brinde',
             'status', 'featured', 'main_image', 'main_image_url', 'images',
             'meta_title', 'meta_description',
             'weight', 'weight_unit', 'dimensions',
@@ -716,6 +717,15 @@ class StoreProductCreateSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         """Validate type_attributes against product_type custom_fields."""
+        from apps.stores.services.preco_zero import checar_preco_zero
+        inst = self.instance
+        if inst is None or any(k in data for k in ('price', 'status', 'is_brinde')):
+            checar_preco_zero(
+                data.get('price', inst.price if inst else None),
+                data.get('status', inst.status if inst else StoreProduct.ProductStatus.ACTIVE)
+                == StoreProduct.ProductStatus.ACTIVE,
+                data.get('is_brinde', inst.is_brinde if inst else False),
+            )
         target_store = data.get('store') or (self.instance.store if self.instance else None)
         category = data.get('category')
         if target_store and category:
@@ -821,7 +831,7 @@ class StoreProductWithTypeSerializer(serializers.ModelSerializer):
             'price', 'compare_at_price', 'cost_price',
             'is_on_sale', 'discount_percentage',
             'track_stock', 'stock_quantity', 'low_stock_threshold',
-            'allow_backorder', 'is_low_stock', 'is_in_stock',
+            'allow_backorder', 'pausar_ao_zerar', 'is_brinde', 'is_low_stock', 'is_in_stock',
             'paused_until', 'is_paused', 'regras_de_venda',
             'status', 'featured',
             'main_image', 'main_image_url', 'images',
@@ -1563,6 +1573,8 @@ class StoreOrderCreateSerializer(serializers.Serializer):
                     stock_quantity=F('stock_quantity') - item['quantity'],
                     sold_count=F('sold_count') + item['quantity'],
                 )
+                from apps.stores.services.pausa_por_estoque import pausar_se_zerou
+                pausar_se_zerou([item['product'].id])
                 stock_changed = True
 
         # Combos: mesma gravação do checkout (linha vendável + escolhas) e
@@ -2355,7 +2367,7 @@ class StoreComboSerializer(serializers.ModelSerializer):
             'id', 'store', 'name', 'slug', 'description',
             'price', 'compare_at_price', 'savings', 'savings_percentage',
             'image', 'image_url',
-            'is_active', 'featured',
+            'is_active', 'is_brinde', 'featured',
             'track_stock', 'stock_quantity', 'dynamic_pricing',
             # `metadata` guarda loyalty_units e `inclui` (o brinde fixo que o
             # agente de WhatsApp lê). Sem ele nos fields, o painel não tinha
@@ -2365,6 +2377,19 @@ class StoreComboSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def validate(self, data):
+        from apps.stores.services.preco_zero import checar_preco_zero
+        inst = self.instance
+        if inst is None or any(k in data for k in ('price', 'is_active', 'is_brinde', 'dynamic_pricing')):
+            # Preço dinâmico: o base pode ser 0 e o total vem dos itens escolhidos.
+            if not data.get('dynamic_pricing', inst.dynamic_pricing if inst else False):
+                checar_preco_zero(
+                    data.get('price', inst.price if inst else None),
+                    data.get('is_active', inst.is_active if inst else True),
+                    data.get('is_brinde', inst.is_brinde if inst else False),
+                )
+        return data
 
     def get_image_url(self, obj):
         return obj.get_image_url()

@@ -57,6 +57,18 @@ def invalidate_catalog_on_product_change(sender, instance, **kwargs):
         logger.warning("Failed to invalidate agent menu_ctx: %s", e)
 
 
+@receiver(post_save, sender='stores.StoreProduct')
+def pausar_ou_retomar_por_estoque(sender, instance, **kwargs):
+    """Produto salvo (painel, importação) com a flag `pausar_ao_zerar`: zerou, sai; repôs, volta."""
+    if not getattr(instance, 'pausar_ao_zerar', False):
+        return
+    from apps.stores.services.pausa_por_estoque import pausar_se_zerou, retomar_se_repos
+    if pausar_se_zerou([instance.id]):
+        instance.status = 'out_of_stock'
+    elif retomar_se_repos([instance.id]):
+        instance.status = 'active'
+
+
 @receiver(post_save, sender='stores.StoreCategory')
 @receiver(post_delete, sender='stores.StoreCategory')
 def invalidate_catalog_on_category_change(sender, instance, **kwargs):

@@ -25,6 +25,8 @@ class StoreCombo(models.Model):
     image = models.ImageField(upload_to='stores/combos/', blank=True, null=True)
     image_url = models.URLField(blank=True)
     is_active = models.BooleanField(default=True)
+    # Brinde: preço R$ 0,00 de propósito (sem isto, combo ativo a zero é erro).
+    is_brinde = models.BooleanField(default=False)
     featured = models.BooleanField(default=False)
     track_stock = models.BooleanField(default=False)
     stock_quantity = models.IntegerField(default=0)

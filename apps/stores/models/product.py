@@ -116,6 +116,11 @@ class StoreProduct(BaseModel):
     stock_quantity = models.IntegerField(default=0)
     low_stock_threshold = models.PositiveIntegerField(default=5)
     allow_backorder = models.BooleanField(default=False)
+    # Tira o item do cardápio sozinho quando o estoque zera (e devolve quando
+    # repõe). Desligado por padrão: quem não pediu continua vendo "esgotado".
+    pausar_ao_zerar = models.BooleanField(default=False)
+    # Brinde: preço R$ 0,00 de propósito. Sem isto, produto ativo a zero é erro.
+    is_brinde = models.BooleanField(default=False)
 
     # Status
     status = models.CharField(
@@ -309,6 +314,8 @@ class StoreProduct(BaseModel):
                 stock_quantity=F('stock_quantity') - quantity,
                 sold_count=F('sold_count') + quantity
             )
+            from apps.stores.services.pausa_por_estoque import pausar_se_zerou
+            pausar_se_zerou([self.id])
             self.refresh_from_db()
 
 
