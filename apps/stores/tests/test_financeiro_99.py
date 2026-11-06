@@ -306,3 +306,39 @@ class RelatorioPorCanalTests(APITestCase):
         self.assertAlmostEqual(float(linha['desconto_plataforma']), 31.99)
         self.assertAlmostEqual(float(linha['comissao_taxas']), 22.37)
         self.assertEqual(pedido.total, Decimal('8.00'))
+
+
+class BlocoPriceRealDa99Tests(TestCase):
+    """Bloco `price` real do pedido 99 #5 de 06/11 (saída de precos_dos_pedidos_99.py).
+
+    Venda 39,99, cliente pagou 8,00, loja recebeu 17,62 (extrato). A 99 manda a
+    comissão (2,85) e a taxa de serviço (1,16), mas a soma não é o custo do canal
+    (22,37): o resto só o extrato diz. Então comissao_taxas fica em aberto até
+    a conciliação, e as parcelas conhecidas vão em campos próprios.
+    """
+
+    PRECO_5 = {
+        'commission_price': 285, 'delivery_discount': 1299, 'delivery_price': 0,
+        'items_discount': 1900, 'order_price': 3999, 'others_fees': {'service_price': 116},
+        'refund_price': 0, 'shop_paid_money': 0, 'store_charged_delivery_price': 1299,
+    }
+
+    def test_comissao_do_aviso_nao_vira_custo_total_do_canal(self):
+        fin = p99.financeiro_do_preco(self.PRECO_5)
+        self.assertIsNone(fin['comissao_taxas'])
+        self.assertIsNone(fin['recebido'])
+        self.assertEqual(fin['comissao_99'], '2.85')
+        self.assertEqual(fin['taxa_servico'], '1.16')
+        self.assertEqual(fin['entrega_cobrada_da_loja'], '12.99')
+
+    def test_shop_paid_money_e_a_parte_da_loja_no_desconto(self):
+        fin = p99.financeiro_do_preco(self.PRECO_5)
+        self.assertEqual(fin['venda_cardapio'], '39.99')
+        self.assertEqual(fin['desconto_total'], '31.99')
+        self.assertEqual(fin['desconto_loja'], '0.00')
+        self.assertEqual(fin['desconto_plataforma'], '31.99')
+
+    def test_loja_que_banca_parte_do_desconto(self):
+        fin = p99.financeiro_do_preco({**self.PRECO_5, 'shop_paid_money': 500})
+        self.assertEqual(fin['desconto_loja'], '5.00')
+        self.assertEqual(fin['desconto_plataforma'], '26.99')

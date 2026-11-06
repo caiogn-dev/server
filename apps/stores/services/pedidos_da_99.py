@@ -232,6 +232,9 @@ _QUEM_ENTREGA = {0: 'cliente retira', 1: 'entregador da 99', 2: 'entrega da loja
 # (`repasse_99`). O bloco price inteiro fica guardado para reprocessar quando
 # soubermos o nome real (scripts/precos_dos_pedidos_99.py mostra o bloco).
 _CHAVES_DESCONTO_LOJA = (
+    # Medido em 06/11: o aviso traz `shop_paid_money` (0 nos 6 pedidos, todo o
+    # desconto foi da 99). É o único campo que separa a parte da loja.
+    'shop_paid_money',
     'shop_subsidy_price', 'shop_subsidy', 'shop_discount', 'shop_discount_price',
     'merchant_subsidy', 'merchant_subsidy_price', 'merchant_discount', 'store_discount',
 )
@@ -243,7 +246,6 @@ _CHAVES_RECEBIDO = (
     'shop_income', 'shop_income_price', 'merchant_income', 'shop_settlement_price',
     'settlement_price', 'shop_receivable', 'shop_receive_price',
 )
-_CHAVES_COMISSAO = ('commission', 'commission_price', 'platform_commission', 'service_fee')
 
 
 def _primeiro(preco: dict, chaves):
@@ -270,9 +272,12 @@ def financeiro_do_preco(preco: dict) -> dict:
     elif da_99 is not None and da_loja is None:
         da_loja = max(desconto - da_99, Decimal('0.00'))
     recebido = _primeiro(preco, _CHAVES_RECEBIDO)
-    comissao = _primeiro(preco, _CHAVES_COMISSAO)
-    if comissao is None and recebido is not None and venda is not None:
-        comissao = venda - recebido
+    # O aviso traz comissão e taxa de serviço, mas a soma NÃO é o custo do
+    # canal: no 99 #5 de 06/11 deram 2,85 + 1,16 e a loja perdeu 22,37 (venda
+    # 39,99, recebido 17,62). O custo real só sai do extrato (venda − recebido).
+    comissao = venda - recebido if recebido is not None and venda is not None else None
+    outras = preco.get('others_fees') if isinstance(preco.get('others_fees'), dict) else {}
+    taxa_servico = _reais(outras['service_price']) if outras.get('service_price') is not None else None
     return {
         'venda_cardapio': _texto(venda),
         'desconto_total': _texto(desconto),
@@ -281,6 +286,9 @@ def financeiro_do_preco(preco: dict) -> dict:
         'comissao_taxas': _texto(comissao),
         'recebido': _texto(recebido),
         'fonte_recebido': 'aviso' if recebido is not None else None,
+        'comissao_99': _texto(_primeiro(preco, ('commission_price', 'commission'))),
+        'taxa_servico': _texto(taxa_servico),
+        'entrega_cobrada_da_loja': _texto(_primeiro(preco, ('store_charged_delivery_price',))),
         'preco': dict(preco),
     }
 
