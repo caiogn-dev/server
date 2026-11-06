@@ -11,6 +11,7 @@ from decimal import Decimal
 from apps.stores.models import StoreProduct
 
 from apps.whatsapp.formatacao import moeda
+from apps.whatsapp.pedir_localizacao import PEDIR_LOCALIZACAO
 
 logger = logging.getLogger(__name__)
 
@@ -227,7 +228,7 @@ class IntentHandler:
         # Endereço que o cliente JÁ mandou não pode ser pedido de novo.
         # Em 09/ago o cliente enviou a localização, recebeu o frete de R$ 7,00
         # calculado, disse "esse é o endereço de entrega" — e 15 segundos depois
-        # ouviu "me envie sua localização pelo alfinete do WhatsApp".
+        # ouviu o pedido de localização de novo.
         salvo = {}
         try:
             salvo = self._get_session_manager().get_delivery_address_info() or {}
@@ -250,7 +251,7 @@ class IntentHandler:
             "🚚 *Entrega e Retirada*",
             "",
             "🛵 *Entrega:* Taxa varia conforme a localização.",
-            "Me envie sua localização pelo *alfinete do WhatsApp* para eu calcular certinho.",
+            PEDIR_LOCALIZACAO,
         ]
         if pickup_enabled:
             address_parts = [
@@ -361,8 +362,7 @@ class IntentHandler:
                 session_manager.bump_address_attempts()
                 return HandlerResult.text(
                     f"🤔 Não achei esse endereço na *{setor_digitado(address_text)}*.\n\n"
-                    "Pra eu calcular a entrega certinho, compartilhe sua *localização* "
-                    "pelo clipe 📎 — ou digite de novo com quadra, alameda e lote."
+                    + PEDIR_LOCALIZACAO
                 )
             if not geo or not geo.get('lat'):
                 # Anti-loop: na 2ª falha consecutiva (geo fora do ar, key
@@ -375,10 +375,9 @@ class IntentHandler:
                     # aceito às cegas: oferece a localização ou um atendente.
                     return HandlerResult.buttons(
                         body=(
-                            "📍 Não consegui achar esse endereço.\n\n"
-                            "O jeito mais rápido: toque no clipe 📎 → *Localização* → "
-                            "*Enviar localização atual*.\n\n"
-                            "Se preferir, chamo alguém da equipe pra fechar com você."
+                            "Não consegui achar esse endereço.\n\n"
+                            + PEDIR_LOCALIZACAO
+                            + "\n\nOu chamo alguém da equipe pra fechar com você."
                         ),
                         buttons=[{'id': 'contact_support', 'title': '👤 Atendente'}],
                     )
@@ -395,9 +394,7 @@ class IntentHandler:
                 where = f" em {city}" if city else ""
                 return HandlerResult.text(
                     f"❌ Não consegui localizar esse endereço{where}.\n\n"
-                    "Por favor, tente novamente com mais detalhes "
-                    "(rua/quadra, número e bairro), ou compartilhe sua "
-                    "localização pelo clipe 📎."
+                    + PEDIR_LOCALIZACAO
                 )
             session_manager.clear_address_attempts()
             return self._process_location_and_ask_payment(

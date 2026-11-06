@@ -15,6 +15,7 @@ from .pedido_digitado import CONFIRMAR, CORRIGIR, PREFIXO_ESCOLHA, PedidoDigitad
 from .payment import CopyPixHandler
 
 from apps.whatsapp.formatacao import moeda
+from apps.whatsapp.pedir_localizacao import PEDIR_LOCALIZACAO
 
 logger = logging.getLogger(__name__)
 
@@ -209,12 +210,8 @@ class InteractiveReplyHandler(IntentHandler):
         )
 
     _ASK_ADDRESS_TEXT = (
-        "📍 *Qual é o seu endereço de entrega?*\n\n"
-        "Você pode:\n\n"
-        "📌 *Compartilhar sua localização* — toque no clipe 📎 e escolha *Localização* (mais rápido e preciso!)\n\n"
-        "✍️ *Ou digitar o endereço*, por exemplo:\n"
-        "_Quadra 304 Sul, Alameda 2, Lote 5_\n"
-        "_ARSE 72, Rua 4, Casa 3_"
+        PEDIR_LOCALIZACAO
+        + "\n_Ex.: Quadra 304 Sul, Alameda 2, Lote 5_"
     )
 
     def _ask_address(self, session_manager) -> HandlerResult:

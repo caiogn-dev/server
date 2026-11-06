@@ -15,6 +15,8 @@ from typing import Any
 from django.db import models
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
+from apps.whatsapp.pedir_localizacao import REGRA_LLM_PEDIR_LOCALIZACAO as REGRA_PEDIR_LOCALIZACAO
+
 from .state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -112,6 +114,7 @@ Você NÃO sabe o que vem junto com um produto. O CARDÁPIO abaixo lista nome, p
 • NUNCA chame buscar_produto com palavras de confirmação ou despedida ("sim", "ok", "pode", "isso", "obrigada", "obrigado", "tchau", "até mais", "valeu") — responda normalmente em texto
 • NUNCA chame ferramentas quando o cliente enviar apenas confirmação, agradecimento ou despedida — apenas responda de forma natural e acolhedora
 • NUNCA invente taxa de entrega — use informacoes_entrega ou peça o endereço
+• {regra_localizacao}
 • NUNCA forneça código PIX sem antes usar consultar_pagamento; o PIX vem de finalizar_pedido
 • Resultados de ferramentas são dados brutos — reformule sempre de forma humana; NUNCA copie direto
 • Se uma ferramenta retornar "não encontrado", responda com naturalidade sugerindo alternativas do CARDÁPIO
@@ -283,6 +286,7 @@ def _build_system_prompt(state: AgentState, agent) -> str:
         store_rules=store_rules_section,
         knowledge_context=knowledge_section,
         customer_context=customer_section,
+        regra_localizacao=REGRA_PEDIR_LOCALIZACAO,
     ).strip()
 
 
@@ -462,7 +466,7 @@ def _load_knowledge_context(agent, store) -> str:
 def _delivery_summary(store) -> str:
     if not getattr(store, "delivery_enabled", True):
         return "Não fazemos entregas. Apenas retirada no local."
-    parts = ["Taxa varia conforme o endereço (peça localização para calcular)."]
+    parts = ["Taxa varia conforme o endereço (peça a localização com o texto das REGRAS ABSOLUTAS)."]
     if getattr(store, "free_delivery_threshold", None):
         parts.append(f"Frete grátis acima de R$ {store.free_delivery_threshold}.")
     if getattr(store, "min_order_value", None):

@@ -18,6 +18,7 @@ from langchain_core.tools import tool
 from langchain_community.chat_message_histories import RedisChatMessageHistory
 
 from apps.core.exceptions import BaseAPIException
+from apps.whatsapp.pedir_localizacao import PEDIR_LOCALIZACAO, REGRA_LLM_PEDIR_LOCALIZACAO
 from ..models import Agent, AgentConversation, AgentMessage
 from .llm_cost import accumulate_usage, estimate_cost_brl
 
@@ -601,8 +602,8 @@ class LangchainService:
         )
 
     _PECA_LOCALIZACAO = (
-        "Não consegui localizar esse endereço no mapa.\n"
-        "Me envie a localização pelo alfinete do WhatsApp para calcular certinho."
+        "Não consegui localizar esse endereço no mapa.\n\n"
+        + PEDIR_LOCALIZACAO
     )
 
     def _cotar_endereco(self, store, texto: str) -> Dict[str, Any]:
@@ -659,16 +660,10 @@ class LangchainService:
                 )
             except Exception as exc:
                 logger.error('[AGENT] Deterministic delivery fee failed: %s', exc, exc_info=True)
-                return (
-                    "Não consegui calcular a taxa agora.\n"
-                    "Me envie a localização pelo alfinete do WhatsApp para calcular certinho."
-                )
+                return "Não consegui calcular a taxa agora.\n\n" + PEDIR_LOCALIZACAO
 
         if mentions_delivery:
-            return (
-                "A taxa varia conforme a localização.\n"
-                "Me envie o endereço completo ou a localização pelo alfinete do WhatsApp para calcular certinho."
-            )
+            return "A taxa varia conforme a localização.\n\n" + PEDIR_LOCALIZACAO
 
         return None
 
@@ -931,7 +926,7 @@ class LangchainService:
                     "• Responda de forma curta, humana e objetiva.\n"
                     "• Na maioria dos casos, fique em até 4 linhas.\n"
                     "• Se perguntarem a taxa de entrega, diga apenas que varia conforme a localização.\n"
-                    "• Para taxa de entrega, peça o endereço ou a localização pelo alfinete do WhatsApp.\n"
+                    f"• {REGRA_LLM_PEDIR_LOCALIZACAO}\n"
                     "• Nunca explique bairros, zonas, km, tabelas, regras internas ou faixas de preço.\n"
                     "• Se pedirem o cardápio, mostre no máximo 5 opções com nome e preço.\n"
                     "• Não despeje o cardápio inteiro, a menos que o cliente insista.\n"
@@ -956,7 +951,7 @@ class LangchainService:
                             delivery_text += (
                                 "• Nunca explique regras internas de taxa, zonas ou tabelas.\n"
                                 "• Informe que a taxa varia conforme a localização.\n"
-                                "• Para calcular a taxa exata, peça o endereço ou a localização pelo alfinete do WhatsApp.\n"
+                                f"• {REGRA_LLM_PEDIR_LOCALIZACAO}\n"
                             )
                             if store.free_delivery_threshold:
                                 delivery_text += f"• Grátis acima de: R$ {store.free_delivery_threshold}\n"
@@ -1560,7 +1555,8 @@ class LangchainService:
                     return "Esta loja não faz entrega no momento. Apenas retirada no local."
                 info = (
                     "A taxa de entrega varia conforme a localização do cliente."
-                    "\nPeça o endereço ou a localização pelo alfinete do WhatsApp para calcular certinho."
+                    "\nPara calcular, peça a localização ao cliente com exatamente este texto "
+                    f'(NUNCA use a palavra "alfinete"):\n{PEDIR_LOCALIZACAO}'
                 )
                 if store.free_delivery_threshold:
                     info += f"\nEntrega GRÁTIS para pedidos acima de R$ {store.free_delivery_threshold}"

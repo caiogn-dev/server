@@ -1,6 +1,8 @@
 import logging
 from typing import Any, Dict, Optional
 
+from apps.whatsapp.pedir_localizacao import PEDIR_LOCALIZACAO
+
 from .base import HandlerResult, IntentHandler
 
 logger = logging.getLogger(__name__)
@@ -130,7 +132,7 @@ class AffirmativeHandler(IntentHandler):
             # Esperando endereço → "Sim" ambíguo, pedir endereço de novo
             if session_manager.is_waiting_for_address():
                 return HandlerResult.text(
-                    "📍 Por favor, me informe seu endereço de entrega ou compartilhe sua localização. 🙏"
+                    PEDIR_LOCALIZACAO
                 )
 
             session = session_manager.get_or_create_session()

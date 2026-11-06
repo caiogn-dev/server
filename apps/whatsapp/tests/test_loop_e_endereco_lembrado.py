@@ -74,7 +74,7 @@ def test_pede_localizacao_quando_ainda_nao_tem_endereco():
 
     texto = h._build_delivery_info_text()
 
-    assert 'alfinete' in texto.lower()
+    assert '📎' in texto  # pede a localização (texto único, sem "alfinete")
 
 
 def test_endereco_sem_taxa_calculada_ainda_confirma_o_endereco():
