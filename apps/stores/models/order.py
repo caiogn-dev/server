@@ -165,6 +165,11 @@ class StoreOrder(BaseModel):
     # `metadata`: é dinheiro, e dinheiro que o relatório precisa somar não pode
     # viver num JSON. Zero em todo pedido que não é vale.
     voucher_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    # Parte do `discount` que o app de entrega (99Food, iFood) bancou. Está
+    # DENTRO de `discount` — `total` continua sendo o que o cliente paga, que é
+    # o que o caixa e a cobrança conferem —, mas não reduz a receita da loja:
+    # `metrics.valor_de_venda` soma de volta. Zero em pedido que não é de app.
+    platform_discount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total = models.DecimalField(max_digits=10, decimal_places=2)
 
     # Payment

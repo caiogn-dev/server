@@ -282,7 +282,7 @@ def compute_forecast(store, days: int = 28, day=None) -> dict:
     minutos_de_lote = {m for m, n in contagem.items() if n >= lote_minimo}
 
     por_dia = {}
-    for o in pedidos_de_receita(loja=store).only('created_at', 'paid_at', 'total', 'delivery_fee'):
+    for o in pedidos_de_receita(loja=store).only('created_at', 'paid_at', 'total', 'delivery_fee', 'platform_discount'):
         quando = o.paid_at or o.created_at
         if o.paid_at and o.paid_at.replace(second=0, microsecond=0) in minutos_de_lote:
             quando = o.created_at
@@ -291,7 +291,7 @@ def compute_forecast(store, days: int = 28, day=None) -> dict:
             continue
         n, v = por_dia.get(d, (0, 0.0))
         # Venda sem frete — mesma régua de metrics.valor_de_venda.
-        por_dia[d] = (n + 1, v + float((o.total or 0) - (o.delivery_fee or 0)))
+        por_dia[d] = (n + 1, v + float((o.total or 0) - (o.delivery_fee or 0) + (o.platform_discount or 0)))
 
     # Dias sem venda contam como zero — senão a média mente para cima.
     diario = []

@@ -218,6 +218,88 @@ def numero_do_pedido(info: dict, dados: dict | None = None):
 _QUEM_ENTREGA = {0: 'cliente retira', 1: 'entregador da 99', 2: 'entrega da loja'}
 
 
+# ── Financeiro ────────────────────────────────────────────────────────────
+#
+# Regra do dono (plano 06/11, item 1.4): faturamento = preço de cardápio;
+# desconto da 99 fica à parte e não reduz receita; desconto da loja reduz;
+# comissão e taxas = venda − recebido; recebido = o que caiu no repasse.
+#
+# Até 06/11 o aviso de teste e o 1º real só trouxeram order_price,
+# items_discount, delivery_price, delivery_discount e real_pay_price — nada
+# diz quem pagou o desconto nem quanto a loja recebe. Os nomes abaixo são os
+# que a 99 (DiDi Food) costuma usar para isso; se vier um deles, ele manda.
+# O que não vier fica None, e o recebido chega pelo extrato de repasse
+# (`repasse_99`). O bloco price inteiro fica guardado para reprocessar quando
+# soubermos o nome real (scripts/precos_dos_pedidos_99.py mostra o bloco).
+_CHAVES_DESCONTO_LOJA = (
+    'shop_subsidy_price', 'shop_subsidy', 'shop_discount', 'shop_discount_price',
+    'merchant_subsidy', 'merchant_subsidy_price', 'merchant_discount', 'store_discount',
+)
+_CHAVES_DESCONTO_99 = (
+    'platform_subsidy_price', 'platform_subsidy', 'platform_discount', 'platform_discount_price',
+    'didi_subsidy', 'didi_discount',
+)
+_CHAVES_RECEBIDO = (
+    'shop_income', 'shop_income_price', 'merchant_income', 'shop_settlement_price',
+    'settlement_price', 'shop_receivable', 'shop_receive_price',
+)
+_CHAVES_COMISSAO = ('commission', 'commission_price', 'platform_commission', 'service_fee')
+
+
+def _primeiro(preco: dict, chaves):
+    for chave in chaves:
+        valor = preco.get(chave)
+        if valor is not None and valor != '':
+            return _reais(valor)
+    return None
+
+
+def _texto(valor):
+    return None if valor is None else str(valor)
+
+
+def financeiro_do_preco(preco: dict) -> dict:
+    """Separa o bloco `price` da 99 nas colunas do relatório (em texto, 2 casas)."""
+    preco = preco if isinstance(preco, dict) else {}
+    venda = _reais(preco.get('order_price')) if preco.get('order_price') is not None else None
+    desconto = _reais(preco.get('items_discount')) + _reais(preco.get('delivery_discount'))
+    da_loja = _primeiro(preco, _CHAVES_DESCONTO_LOJA)
+    da_99 = _primeiro(preco, _CHAVES_DESCONTO_99)
+    if da_loja is not None and da_99 is None:
+        da_99 = max(desconto - da_loja, Decimal('0.00'))
+    elif da_99 is not None and da_loja is None:
+        da_loja = max(desconto - da_99, Decimal('0.00'))
+    recebido = _primeiro(preco, _CHAVES_RECEBIDO)
+    comissao = _primeiro(preco, _CHAVES_COMISSAO)
+    if comissao is None and recebido is not None and venda is not None:
+        comissao = venda - recebido
+    return {
+        'venda_cardapio': _texto(venda),
+        'desconto_total': _texto(desconto),
+        'desconto_plataforma': _texto(da_99),
+        'desconto_loja': _texto(da_loja),
+        'comissao_taxas': _texto(comissao),
+        'recebido': _texto(recebido),
+        'fonte_recebido': 'aviso' if recebido is not None else None,
+        'preco': dict(preco),
+    }
+
+
+def desconto_da_plataforma(financeiro: dict) -> Decimal:
+    """Quanto do desconto não sai da receita da loja.
+
+    Sem dono declarado no aviso, o desconto conta como da 99: no extrato de
+    06/11 a loja recebeu R$ 17,62 de um pedido que o cliente pagou R$ 8,00 —
+    quem bancou foi a 99. Se o aviso disser a parte da loja, ela reduz receita.
+    """
+    if financeiro.get('desconto_plataforma') is not None:
+        return Decimal(financeiro['desconto_plataforma'])
+    if financeiro.get('desconto_loja') is not None:
+        return max(Decimal(financeiro['desconto_total'] or '0') - Decimal(financeiro['desconto_loja']),
+                   Decimal('0.00'))
+    return Decimal(financeiro.get('desconto_total') or '0')
+
+
 def receber_pedido_novo(store, dados: dict):
     """Cria o pedido a partir do `orderNew`. Aviso repetido devolve o mesmo pedido."""
     from apps.stores.models import StoreOrder, StoreOrderItem
@@ -242,9 +324,12 @@ def receber_pedido_novo(store, dados: dict):
         subtotal = _reais(preco.get('order_price'))
         desconto = _reais(preco.get('items_discount')) + _reais(preco.get('delivery_discount'))
         frete = _reais(preco.get('delivery_price'))
+        # `total` = o que o cliente paga (caixa, troco, cobrança). A venda de
+        # cardápio volta pela `platform_discount` — ver financeiro_do_preco.
         total = _reais(preco.get('real_pay_price')) if preco.get('real_pay_price') else None
         if total is None:
             total = max(subtotal + frete - desconto, Decimal('0.00'))
+        financeiro = financeiro_do_preco(preco)
 
         nome = (cliente.get('name') or ' '.join(
             p for p in (cliente.get('first_name'), cliente.get('last_name')) if p) or 'Cliente 99Food')
@@ -276,6 +361,7 @@ def receber_pedido_novo(store, dados: dict):
             change_for=_reais(info.get('change_for')) if dinheiro and info.get('change_for') else None,
             subtotal=subtotal,
             discount=desconto,
+            platform_discount=min(desconto_da_plataforma(financeiro), desconto),
             delivery_fee=frete,
             total=total,
             delivery_method=(StoreOrder.DeliveryMethod.PICKUP if retirada else StoreOrder.DeliveryMethod.DELIVERY),
@@ -300,6 +386,7 @@ def receber_pedido_novo(store, dados: dict):
                     'codigo_entrega': str(info.get('handover_code') or ''),
                     'codigo_retirada': str(info.get('takeaway_code') or ''),
                     'confirmado': False,
+                    'financeiro': financeiro,
                 },
             },
         )

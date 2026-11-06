@@ -197,12 +197,24 @@ class ChannelsReportView(BaseAnalyticsView):
         def channel_rows():
             rows = []
             for channel, agg in sorted(by_channel.items(), key=lambda kv: -kv[1]['revenue']):
-                rows.append({
+                row = {
                     'channel': channel,
                     'orders': agg['orders'],
                     'revenue': _round2(agg['revenue']),
                     'avg_ticket': _round2(agg['revenue'] / agg['orders']) if agg['orders'] else 0,
-                })
+                }
+                if channel == '99food':
+                    # Venda de cardápio já está em `revenue`; aqui o que a 99
+                    # bancou, o que ela ficou e o que caiu na conta.
+                    from apps.stores.services.repasse_99 import resumo_de_pedidos
+                    r = resumo_de_pedidos(qs)
+                    row.update({
+                        'desconto_plataforma': _round2(r['desconto_plataforma']),
+                        'comissao_taxas': _round2(r['comissao_taxas']),
+                        'recebido': _round2(r['recebido']),
+                        'conciliados': r['conciliados'],
+                    })
+                rows.append(row)
             return rows
 
         def dimension(field, label):
