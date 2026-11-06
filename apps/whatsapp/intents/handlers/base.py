@@ -11,7 +11,7 @@ from decimal import Decimal
 from apps.stores.models import StoreProduct
 
 from apps.whatsapp.formatacao import moeda
-from apps.whatsapp.pedir_localizacao import PEDIR_LOCALIZACAO
+from apps.whatsapp.pedir_localizacao import PEDIR_LOCALIZACAO, PEDIR_LOCALIZACAO_BOTAO
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,15 @@ def _normalize_text(s: str) -> str:
     return ''.join(
         c for c in unicodedata.normalize('NFD', s.lower())
         if unicodedata.category(c) != 'Mn'
+    )
+
+
+def pedido_de_localizacao(prefixo: str = '', sufixo: str = '') -> 'HandlerResult':
+    """Pede a localização com o botão nativo; reserva = texto do Anexar."""
+    antes = f"{prefixo}\n\n" if prefixo else ''
+    return HandlerResult.location_request(
+        body=antes + PEDIR_LOCALIZACAO_BOTAO + sufixo,
+        fallback_text=antes + PEDIR_LOCALIZACAO + sufixo,
     )
 
 
@@ -64,6 +73,21 @@ class HandlerResult:
             use_interactive=True,
             interactive_type='buttons',
             interactive_data={'body': body, 'buttons': buttons, 'header': header, 'footer': footer},
+        )
+
+    @classmethod
+    def location_request(cls, body: str, fallback_text: str) -> 'HandlerResult':
+        """Botão nativo "Enviar localização" (location_request_message).
+
+        `response_text` é o texto de reserva (Anexar → Localização): quem não envia
+        interativo — task, outro canal — manda o texto; e o webhook cai nele
+        quando a Cloud API recusa o botão.
+        """
+        return cls(
+            response_text=fallback_text,
+            use_interactive=True,
+            interactive_type='location_request',
+            interactive_data={'body': body, 'fallback_text': fallback_text},
         )
 
     @classmethod
@@ -206,6 +230,16 @@ class IntentHandler:
                     return zone
         return None
 
+    def _resultado_info_de_entrega(self, message: str = "") -> 'HandlerResult':
+        """Info de entrega; sem endereço ainda, vai com o botão "Enviar localização"."""
+        texto = self._build_delivery_info_text(message)
+        if PEDIR_LOCALIZACAO not in texto:
+            return HandlerResult.text(texto)
+        return HandlerResult.location_request(
+            body=texto.replace(PEDIR_LOCALIZACAO, PEDIR_LOCALIZACAO_BOTAO),
+            fallback_text=texto,
+        )
+
     def _build_delivery_info_text(self, message: str = "") -> str:
         if not self.store:
             return (
@@ -340,7 +374,7 @@ class IntentHandler:
         address_text = self._endereco_com_quadra(session_manager, address_text)
         if address_text is None:
             return HandlerResult.text(
-                "📍 Qual a quadra? (ex.: 307 Norte, ARSE 72)\n\n"
+                "Qual a quadra? (ex.: 307 Norte, ARSE 72)\n\n"
                 "Em Palmas alameda e lote se repetem em todas as quadras."
             )
         try:
@@ -360,9 +394,8 @@ class IntentHandler:
                     address_text[:60], geo.get('formatted_address'),
                 )
                 session_manager.bump_address_attempts()
-                return HandlerResult.text(
-                    f"🤔 Não achei esse endereço na *{setor_digitado(address_text)}*.\n\n"
-                    + PEDIR_LOCALIZACAO
+                return pedido_de_localizacao(
+                    f"Não achei esse endereço na *{setor_digitado(address_text)}*."
                 )
             if not geo or not geo.get('lat'):
                 # Anti-loop: na 2ª falha consecutiva (geo fora do ar, key
@@ -392,10 +425,7 @@ class IntentHandler:
                     return self._ask_payment_method('delivery')
                 city = getattr(self.store, 'city', '') or ''
                 where = f" em {city}" if city else ""
-                return HandlerResult.text(
-                    f"❌ Não consegui localizar esse endereço{where}.\n\n"
-                    + PEDIR_LOCALIZACAO
-                )
+                return pedido_de_localizacao(f"Não consegui localizar esse endereço{where}.")
             session_manager.clear_address_attempts()
             return self._process_location_and_ask_payment(
                 session_manager=session_manager,

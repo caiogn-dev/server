@@ -21,7 +21,7 @@ PROIBICAO = 'NUNCA use a palavra "alfinete"'
 
 def test_texto_canonico_e_passo_a_passo_nas_duas_plataformas():
     t = PEDIR_LOCALIZACAO
-    assert '📎' in t
+    assert '*Anexar*' in t and 'clipe' in t
     assert 'iPhone' in t and '+' in t
     assert '*Localização*' in t
     assert '*Enviar localização atual*' in t
@@ -156,33 +156,46 @@ class CaminhosDoCheckoutTest(TestCase):
         conversation = Conversation.objects.create(account=account, phone_number='5563900000001')
         self.handler = InteractiveReplyHandler(account, conversation, profile)
 
-    @staticmethod
-    def _texto(r):
-        if r.use_interactive:
-            return (r.interactive_data or {}).get('body') or ''
-        return r.response_text or ''
+    def assertPedeLocalizacao(self, r, prefixo=''):
+        """Botão nativo com o corpo curto; o texto com 📎 vai de reserva."""
+        from apps.whatsapp.pedir_localizacao import PEDIR_LOCALIZACAO_BOTAO
 
-    def test_endereco_de_outro_setor_pede_com_o_texto(self):
+        self.assertEqual(r.interactive_type, 'location_request')
+        self.assertIn(PEDIR_LOCALIZACAO_BOTAO, r.interactive_data['body'])
+        self.assertIn(PEDIR_LOCALIZACAO, r.interactive_data['fallback_text'])
+        self.assertIn(prefixo, r.interactive_data['body'])
+        self.assertIn(prefixo, r.interactive_data['fallback_text'])
+        for campo in ('body', 'fallback_text'):
+            for emoji in ('📍', '📎', '📌'):
+                self.assertNotIn(emoji, r.interactive_data[campo])
+
+    def test_endereco_de_outro_setor_pede_a_localizacao(self):
         with patch('apps.stores.services.geo.geo_service.localizar', return_value=GEO_SUL):
             r = self.handler._handle_address_input('Na 307 norte Al 19 lote 53')
-        texto = self._texto(r)
-        self.assertIn('307 Norte', texto)
-        self.assertIn(PEDIR_LOCALIZACAO, texto)
+        self.assertPedeLocalizacao(r, '307 Norte')
 
-    def test_endereco_nao_achado_pede_com_o_texto_nas_duas_tentativas(self):
+    def test_endereco_nao_achado_pede_a_localizacao_nas_duas_tentativas(self):
         with patch('apps.stores.services.geo.geo_service.localizar', return_value=None), \
                 patch.object(type(self.handler), '_endereco_com_quadra', lambda self, sm, texto: texto):
             primeira = self.handler._handle_address_input('lugar que não existe')
             segunda = self.handler._handle_address_input('desisto')
-        self.assertIn(PEDIR_LOCALIZACAO, self._texto(primeira))
-        self.assertIn(PEDIR_LOCALIZACAO, self._texto(segunda))
+        self.assertPedeLocalizacao(primeira, 'Não consegui localizar')
+        # 2ª falha: botões com "Atendente" (não cabe junto do botão de localização).
+        self.assertEqual(segunda.interactive_type, 'buttons')
+        self.assertIn(PEDIR_LOCALIZACAO, segunda.interactive_data['body'])
+        for emoji in ('📍', '📎', '📌'):
+            self.assertNotIn(emoji, segunda.interactive_data['body'])
 
-    def test_sim_ambiguo_esperando_endereco_pede_com_o_texto(self):
+    def test_pedido_de_endereco_dos_botoes_de_entrega(self):
+        sm = self.handler._get_session_manager()
+        sm.get_or_create_session()
+        self.assertPedeLocalizacao(self.handler._ask_address(sm))
+
+    def test_sim_ambiguo_esperando_endereco_pede_a_localizacao(self):
         from apps.whatsapp.intents.handlers.fallback import AffirmativeHandler
 
         h = AffirmativeHandler(self.handler.account, self.handler.conversation, self.handler.company_profile)
         sm = h._get_session_manager()
         sm.get_or_create_session()
         sm.set_waiting_for_address(True)
-        r = h.handle({'original_message': 'sim'})
-        self.assertIn(PEDIR_LOCALIZACAO, self._texto(r))
+        self.assertPedeLocalizacao(h.handle({'original_message': 'sim'}))
