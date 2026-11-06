@@ -1,0 +1,580 @@
+aiohappyeyeballs==2.7.1
+    # via aiohttp
+aiohttp==3.14.4
+    # via
+    #   langchain-community
+    #   pywebpush
+aiosignal==1.4.0
+    # via aiohttp
+amqp==5.4.1
+    # via kombu
+annotated-types==0.8.0
+    # via pydantic
+anthropic==1.12.1
+    # via
+    #   -r requirements.txt
+    #   langchain-anthropic
+anyio==4.15.1
+    # via
+    #   anthropic
+    #   httpx
+    #   httpx2
+    #   mcp
+    #   openai
+    #   sse-starlette
+    #   starlette
+    #   watchfiles
+asgiref==3.12.1
+    # via
+    #   channels
+    #   channels-redis
+    #   daphne
+    #   django
+    #   django-cors-headers
+async-timeout==5.0.1
+    # via redis
+attrs==26.1.0
+    # via
+    #   aiohttp
+    #   jsonschema
+    #   referencing
+    #   service-identity
+    #   twisted
+autobahn==26.11.1
+    # via
+    #   -r c2.txt
+    #   daphne
+automat==25.4.16
+    # via twisted
+billiard==4.3.1
+    # via celery
+boto3==1.43.110
+    # via -r requirements.txt
+botocore==1.43.110
+    # via
+    #   boto3
+    #   s3transfer
+cbor2==6.1.5
+    # via autobahn
+celery==5.6.3
+    # via
+    #   -r requirements.txt
+    #   django-celery-beat
+    #   flower
+certifi==2026.10.23
+    # via
+    #   -r c2.txt
+    #   httpcore
+    #   httpx
+    #   langchain-openai
+    #   requests
+    #   sentry-sdk
+cffi==2.1.1
+    # via
+    #   autobahn
+    #   cryptography
+channels==4.3.2
+    # via
+    #   -r requirements.txt
+    #   channels-redis
+channels-redis==4.3.0
+    # via -r requirements.txt
+charset-normalizer==3.5.2
+    # via
+    #   reportlab
+    #   requests
+click==8.5.0
+    # via
+    #   celery
+    #   click-didyoumean
+    #   click-plugins
+    #   click-repl
+    #   uvicorn
+click-didyoumean==0.3.1
+    # via celery
+click-plugins==1.1.1.2
+    # via celery
+click-repl==0.4.1
+    # via celery
+constantly==23.10.4
+    # via twisted
+cron-descriptor==1.4.5
+    # via django-celery-beat
+cryptography==50.0.2
+    # via
+    #   -r requirements.txt
+    #   autobahn
+    #   google-auth
+    #   http-ece
+    #   py-vapid
+    #   pyjwt
+    #   pyopenssl
+    #   pywebpush
+    #   service-identity
+daphne==4.2.3
+    # via -r requirements.txt
+django==5.2.18
+    # via
+    #   -r requirements.txt
+    #   channels
+    #   django-celery-beat
+    #   django-cors-headers
+    #   django-filter
+    #   django-storages
+    #   django-timezone-field
+    #   django-unfold
+    #   djangorestframework
+    #   drf-nested-routers
+    #   drf-spectacular
+django-celery-beat==2.9.0
+    # via -r requirements.txt
+django-cors-headers==4.9.0
+    # via -r requirements.txt
+django-filter==26.2
+    # via -r requirements.txt
+django-storages==1.14.6
+    # via -r requirements.txt
+django-timezone-field==7.2.2
+    # via django-celery-beat
+django-unfold==0.91.0
+    # via -r requirements.txt
+djangorestframework==3.18.3
+    # via
+    #   -r requirements.txt
+    #   drf-nested-routers
+    #   drf-spectacular
+docstring-parser==0.18.0
+    # via anthropic
+drf-nested-routers==0.95.3
+    # via -r requirements.txt
+drf-spectacular==0.30.0
+    # via -r requirements.txt
+et-xmlfile==2.0.0
+    # via openpyxl
+flower==2.2.0
+    # via -r requirements.txt
+frozenlist==1.8.0
+    # via
+    #   aiohttp
+    #   aiosignal
+google-api-core==2.42.0
+    # via google-api-python-client
+google-api-python-client==2.201.0
+    # via -r requirements.txt
+google-auth==2.61.0
+    # via
+    #   -r requirements.txt
+    #   google-api-core
+    #   google-api-python-client
+    #   google-auth-httplib2
+google-auth-httplib2==0.4.4
+    # via google-api-python-client
+googleapis-common-protos==1.75.5
+    # via google-api-core
+gunicorn==26.2.0
+    # via -r requirements.txt
+h11==0.16.0
+    # via
+    #   httpcore
+    #   httpcore2
+    #   uvicorn
+http-ece==1.2.1
+    # via pywebpush
+httpcore==1.0.9
+    # via httpx
+httpcore2==2.13.1
+    # via httpx2
+httplib2==0.32.0
+    # via
+    #   google-api-python-client
+    #   google-auth-httplib2
+httptools==0.8.0
+    # via uvicorn
+httpx==0.28.1
+    # via
+    #   langchain-core
+    #   langgraph-sdk
+    #   langsmith
+httpx-sse==0.4.3
+    # via langchain-community
+httpx2==2.13.1
+    # via
+    #   anthropic
+    #   mcp
+    #   openai
+humanize==4.16.0
+    # via flower
+hyperlink==21.0.0
+    # via
+    #   autobahn
+    #   twisted
+idna==3.20
+    # via
+    #   anyio
+    #   httpx
+    #   httpx2
+    #   hyperlink
+    #   requests
+    #   twisted
+    #   yarl
+incremental==24.11.0
+    # via twisted
+inflection==0.5.1
+    # via drf-spectacular
+iniconfig==2.3.1
+    # via pytest
+jiter==0.17.0
+    # via
+    #   anthropic
+    #   openai
+jmespath==1.1.0
+    # via
+    #   boto3
+    #   botocore
+jsonpatch==1.34
+    # via langchain-core
+jsonpointer==3.2.0
+    # via jsonpatch
+jsonschema==4.26.0
+    # via
+    #   drf-spectacular
+    #   mcp
+jsonschema-specifications==2025.9.1
+    # via jsonschema
+kombu==5.6.2
+    # via celery
+langchain==1.3.2
+    # via -r requirements.txt
+langchain-anthropic==1.7.5
+    # via -r requirements.txt
+langchain-classic==1.0.8
+    # via langchain-community
+langchain-community==0.4.2
+    # via -r requirements.txt
+langchain-core==1.6.9
+    # via
+    #   -r requirements.txt
+    #   langchain
+    #   langchain-anthropic
+    #   langchain-classic
+    #   langchain-community
+    #   langchain-openai
+    #   langchain-text-splitters
+    #   langgraph
+    #   langgraph-checkpoint
+    #   langgraph-prebuilt
+langchain-openai==1.7.0
+    # via -r requirements.txt
+langchain-protocol==0.0.19
+    # via langchain-core
+langchain-text-splitters==1.1.3
+    # via langchain-classic
+langgraph==1.2.2
+    # via langchain
+langgraph-checkpoint==4.2.0
+    # via
+    #   langgraph
+    #   langgraph-prebuilt
+langgraph-prebuilt==1.1.0
+    # via langgraph
+langgraph-sdk==0.3.15
+    # via langgraph
+langsmith==0.8.5
+    # via
+    #   langchain-classic
+    #   langchain-community
+    #   langchain-core
+mcp==2.3.0
+    # via -r requirements.txt
+mcp-types==2.3.0
+    # via mcp
+mercadopago==3.6.0
+    # via -r requirements.txt
+msgpack==1.2.3
+    # via
+    #   autobahn
+    #   channels-redis
+multidict==6.9.1
+    # via
+    #   aiohttp
+    #   yarl
+numpy==2.4.6
+    # via langchain-community
+openai==3.26.1
+    # via
+    #   -r requirements.txt
+    #   langchain-openai
+openpyxl==3.1.5
+    # via -r requirements.txt
+opentelemetry-api==1.45.1
+    # via
+    #   google-api-core
+    #   mcp
+orjson==3.13.0
+    # via
+    #   langgraph-sdk
+    #   langsmith
+ormsgpack==1.12.2
+    # via langgraph-checkpoint
+packaging==26.3
+    # via
+    #   incremental
+    #   kombu
+    #   langchain-core
+    #   langsmith
+    #   pytest
+phonenumbers==9.0.41
+    # via -r requirements.txt
+pillow==13.0.0
+    # via
+    #   -r c2.txt
+    #   -r requirements.txt
+    #   reportlab
+pluggy==1.6.0
+    # via pytest
+prometheus-client==0.26.0
+    # via flower
+prompt-toolkit==3.0.53
+    # via click-repl
+propcache==0.5.4
+    # via
+    #   aiohttp
+    #   yarl
+proto-plus==1.29.0
+    # via google-api-core
+protobuf==7.36.2
+    # via
+    #   google-api-core
+    #   googleapis-common-protos
+    #   proto-plus
+psycopg2-binary==2.9.13
+    # via -r requirements.txt
+py-vapid==1.9.4
+    # via pywebpush
+pyasn1==0.6.5
+    # via
+    #   -r c2.txt
+    #   pyasn1-modules
+pyasn1-modules==0.4.2
+    # via google-auth
+pycparser==3.11
+    # via cffi
+pydantic==2.14.0
+    # via
+    #   anthropic
+    #   langchain
+    #   langchain-anthropic
+    #   langchain-classic
+    #   langchain-core
+    #   langgraph
+    #   langsmith
+    #   mcp
+    #   mcp-types
+    #   openai
+    #   pydantic-settings
+pydantic-core==2.50.0
+    # via pydantic
+pydantic-settings==2.15.0
+    # via langchain-community
+pygments==2.21.0
+    # via pytest
+pyjwt==2.15.1
+    # via
+    #   mcp
+    #   redis
+pyopenssl==26.4.0
+    # via twisted
+pyparsing==3.3.3
+    # via httplib2
+pypdf==6.21.4
+    # via
+    #   -r c2.txt
+    #   -r requirements.txt
+pytest==9.1.1
+    # via
+    #   -r requirements.txt
+    #   pytest-django
+pytest-django==4.14.0
+    # via -r requirements.txt
+python-crontab==3.4.0
+    # via django-celery-beat
+python-dateutil==2.9.0.post0
+    # via
+    #   botocore
+    #   celery
+python-dotenv==1.2.4
+    # via
+    #   -r requirements.txt
+    #   pydantic-settings
+    #   uvicorn
+python-multipart==0.0.32
+    # via mcp
+pytz==2026.5
+    # via flower
+pywebpush==2.5.0
+    # via -r requirements.txt
+pyyaml==6.0.3
+    # via
+    #   drf-spectacular
+    #   langchain-classic
+    #   langchain-community
+    #   langchain-core
+    #   uvicorn
+redis==5.3.1
+    # via
+    #   -r requirements.txt
+    #   channels-redis
+referencing==0.37.0
+    # via
+    #   jsonschema
+    #   jsonschema-specifications
+regex==2026.9.29
+    # via tiktoken
+reportlab==5.0.1
+    # via -r requirements.txt
+requests==2.34.2
+    # via
+    #   -r requirements.txt
+    #   google-api-core
+    #   langchain-classic
+    #   langchain-community
+    #   langsmith
+    #   mercadopago
+    #   pywebpush
+    #   requests-toolbelt
+    #   resend
+    #   tiktoken
+requests-toolbelt==1.0.0
+    # via langsmith
+resend==2.49.1
+    # via -r requirements.txt
+rpds-py==2026.9.1
+    # via
+    #   jsonschema
+    #   referencing
+s3transfer==0.19.2
+    # via boto3
+sentry-sdk==2.71.0
+    # via -r requirements.txt
+service-identity==26.1.0
+    # via twisted
+six==1.17.0
+    # via python-dateutil
+sniffio==1.3.1
+    # via
+    #   anthropic
+    #   openai
+sqlalchemy==2.1.4
+    # via
+    #   langchain-classic
+    #   langchain-community
+sqlparse==0.6.0
+    # via django
+sse-starlette==3.5.0
+    # via mcp
+starlette==1.7.0
+    # via
+    #   mcp
+    #   sse-starlette
+tenacity==9.2.1
+    # via
+    #   langchain-community
+    #   langchain-core
+tiktoken==0.14.0
+    # via langchain-openai
+tornado==6.6
+    # via
+    #   -r c2.txt
+    #   flower
+truststore==0.10.4
+    # via
+    #   httpcore2
+    #   httpx2
+twisted==26.10.0
+    # via
+    #   -r c2.txt
+    #   daphne
+txaio==26.6.1
+    # via autobahn
+typing-extensions==4.16.0
+    # via
+    #   aiohttp
+    #   aiosignal
+    #   anthropic
+    #   anyio
+    #   click-repl
+    #   httpx2
+    #   langchain-core
+    #   langchain-protocol
+    #   mcp
+    #   mcp-types
+    #   openai
+    #   opentelemetry-api
+    #   pydantic
+    #   pydantic-core
+    #   pyopenssl
+    #   referencing
+    #   resend
+    #   sqlalchemy
+    #   starlette
+    #   twisted
+    #   typing-inspection
+typing-inspection==0.4.4
+    # via
+    #   mcp
+    #   pydantic
+    #   pydantic-settings
+tzdata==2026.5
+    # via
+    #   django-celery-beat
+    #   kombu
+tzlocal==5.4.4
+    # via celery
+ujson==6.0.0
+    # via autobahn
+uritemplate==4.2.0
+    # via
+    #   drf-spectacular
+    #   google-api-python-client
+urllib3==2.8.0
+    # via
+    #   botocore
+    #   requests
+    #   sentry-sdk
+uuid-utils==0.17.1
+    # via
+    #   langchain-core
+    #   langsmith
+uvicorn==0.54.0
+    # via
+    #   -r requirements.txt
+    #   mcp
+uvloop==0.23.0
+    # via uvicorn
+vine==5.1.0
+    # via
+    #   amqp
+    #   celery
+    #   kombu
+watchfiles==1.3.0
+    # via uvicorn
+wcwidth==0.9.2
+    # via prompt-toolkit
+websockets==13.1
+    # via
+    #   -r requirements.txt
+    #   uvicorn
+whitenoise==6.12.0
+    # via -r requirements.txt
+xlsxwriter==3.2.9
+    # via -r requirements.txt
+xxhash==4.0.1
+    # via
+    #   langgraph
+    #   langsmith
+yarl==1.25.1
+    # via aiohttp
+zope-interface==8.6
+    # via twisted
+zstandard==0.25.0
+    # via langsmith

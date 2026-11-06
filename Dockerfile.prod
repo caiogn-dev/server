@@ -19,9 +19,13 @@ WORKDIR /build
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# Versões travadas em requirements.lock (gerado com uv a partir do
+# requirements.txt). O pip resolvia de novo a cada build e levava até 90 min
+# testando versão por versão; com o lock o uv só baixa e instala.
+# Para atualizar: ver o cabeçalho de requirements.txt.
+COPY requirements.txt requirements.lock ./
+RUN pip install --no-cache-dir uv==0.13.7 && \
+    uv pip install --python /opt/venv/bin/python --no-cache -r requirements.lock
 
 # ---
 # Stage 2: Runtime
