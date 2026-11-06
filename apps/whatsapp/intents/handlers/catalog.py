@@ -54,7 +54,7 @@ class PriceCheckHandler(IntentHandler):
         normalized_message = self._normalize_lookup_text(message)
         if any(term in normalized_message for term in ('taxa', 'frete', 'entrega', 'delivery')):
             logger.info("[PriceCheckHandler] Respondendo taxa de entrega de forma determinística")
-            return HandlerResult.text(self._build_delivery_info_text(message))
+            return self._resultado_info_de_entrega(message)
         logger.info("[PriceCheckHandler] Respondendo preço de produto de forma determinística")
         return self._legacy_handle(intent_data)
 

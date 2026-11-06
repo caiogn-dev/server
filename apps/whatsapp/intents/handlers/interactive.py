@@ -7,7 +7,7 @@ from django.utils import timezone
 
 from apps.stores.models import StoreProduct
 
-from .base import HandlerResult, IntentHandler
+from .base import HandlerResult, IntentHandler, pedido_de_localizacao
 from .catalog import MenuRequestHandler
 from .fallback import HumanHandoffHandler
 from .order import CancelOrderHandler, TrackOrderHandler
@@ -15,6 +15,7 @@ from .pedido_digitado import CONFIRMAR, CORRIGIR, PREFIXO_ESCOLHA, PedidoDigitad
 from .payment import CopyPixHandler
 
 from apps.whatsapp.formatacao import moeda
+from apps.whatsapp.pedir_localizacao import PEDIR_LOCALIZACAO
 
 logger = logging.getLogger(__name__)
 
@@ -208,14 +209,8 @@ class InteractiveReplyHandler(IntentHandler):
             ],
         )
 
-    _ASK_ADDRESS_TEXT = (
-        "📍 *Qual é o seu endereço de entrega?*\n\n"
-        "Você pode:\n\n"
-        "📌 *Compartilhar sua localização* — toque no clipe 📎 e escolha *Localização* (mais rápido e preciso!)\n\n"
-        "✍️ *Ou digitar o endereço*, por exemplo:\n"
-        "_Quadra 304 Sul, Alameda 2, Lote 5_\n"
-        "_ARSE 72, Rua 4, Casa 3_"
-    )
+    _EXEMPLO_DE_ENDERECO = "\n_Ex.: Quadra 304 Sul, Alameda 2, Lote 5_"
+    _ASK_ADDRESS_TEXT = PEDIR_LOCALIZACAO + _EXEMPLO_DE_ENDERECO
 
     def _ask_address(self, session_manager) -> HandlerResult:
         try:
@@ -223,7 +218,7 @@ class InteractiveReplyHandler(IntentHandler):
             session_manager.set_waiting_for_address(True)
         except Exception as exc:
             logger.warning('[InteractiveReplyHandler] Erro ao salvar estado de endereço: %s', exc)
-        return HandlerResult.text(self._ASK_ADDRESS_TEXT)
+        return pedido_de_localizacao(sufixo=self._EXEMPLO_DE_ENDERECO)
 
     def _handle_feedback_rating(self, reply_id: str) -> HandlerResult:
         """Grava a nota dos botões de avaliação (rating_{n}_{order_id}).

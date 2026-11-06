@@ -190,6 +190,38 @@ class MessageService:
         
         return message
 
+    def send_location_request(
+        self,
+        account_id: str,
+        to: str,
+        body_text: str,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict] = None
+    ) -> Message:
+        """Botão nativo "Enviar localização". Erro da API sobe para quem chamou."""
+        account = self._get_account(account_id)
+        api_service = WhatsAppAPIService(account)
+
+        message = self._create_outbound_message(
+            account=account,
+            to=to,
+            message_type=Message.MessageType.INTERACTIVE,
+            content={'type': 'location_request_message', 'body_text': body_text},
+            text_body=body_text,
+            context_message_id=reply_to or '',
+            metadata=metadata or {}
+        )
+
+        try:
+            response = api_service.send_location_request(to=to, body_text=body_text, reply_to=reply_to)
+            self._update_message_sent(message, response)
+            logger.info(f"Location request message sent: {message.id}")
+        except Exception as e:
+            self._update_message_failed(message, str(e))
+            raise
+
+        return message
+
     def send_interactive_list(
         self,
         account_id: str,

@@ -89,7 +89,13 @@ class DeliveryInfoHandler(IntentHandler):
 
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
         logger.info("[DeliveryInfoHandler] Respondendo entrega de forma determinística")
-        text = self._build_delivery_info_text(intent_data.get('original_message', ''))
+        message = intent_data.get('original_message', '')
+        pedido = self._resultado_info_de_entrega(message)
+        if pedido.interactive_type == 'location_request':
+            # Sem endereço ainda: o botão "Enviar localização" vale mais que
+            # Cardápio/Retirar (não cabem juntos; a retirada segue no texto).
+            return pedido
+        text = pedido.response_text
         store = self.store
         delivery_enabled = getattr(store, 'delivery_enabled', True) if store else True
         pickup_enabled = getattr(store, 'pickup_enabled', True) if store else True

@@ -1915,6 +1915,29 @@ class WebhookService:
         if isinstance(header, str):
             header = {'type': 'text', 'text': header}
 
+        if unified_response.interactive_type == 'location_request':
+            try:
+                svc.send_location_request(
+                    account_id=account_id,
+                    to=message.from_number,
+                    body_text=interactive_data.get('body') or unified_response.content,
+                    reply_to=str(message.whatsapp_message_id),
+                )
+            except Exception as exc:
+                # Botão recusado (versão antiga do app, API): vai o texto do Anexar → Localização.
+                logger.warning(
+                    '[pipeline] Location request send failed, falling back to text: %s',
+                    exc,
+                    extra={'message_id': str(message.id)},
+                )
+                svc.send_text_message(
+                    account_id=account_id,
+                    to=message.from_number,
+                    text=interactive_data.get('fallback_text') or unified_response.content,
+                    reply_to=str(message.whatsapp_message_id),
+                )
+            return
+
         if unified_response.interactive_type == 'catalog_message':
             try:
                 svc.send_catalog_message(

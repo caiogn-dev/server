@@ -241,6 +241,33 @@ class WhatsAppAPIService:
             data=payload
         )
 
+    def send_location_request(
+        self,
+        to: str,
+        body_text: str,
+        reply_to: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Botão nativo "Enviar localização" (interactive location_request_message)."""
+        payload = {
+            'messaging_product': 'whatsapp',
+            'recipient_type': 'individual',
+            'to': to,
+            'type': 'interactive',
+            'interactive': {
+                'type': 'location_request_message',
+                'body': {'text': body_text},
+                'action': {'name': 'send_location'},
+            }
+        }
+        if reply_to:
+            payload['context'] = {'message_id': reply_to}
+
+        return self._make_request(
+            'POST',
+            f'{self.phone_number_id}/messages',
+            data=payload
+        )
+
     def send_interactive_list(
         self,
         to: str,
