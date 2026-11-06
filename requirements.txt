@@ -3,8 +3,6 @@
 #   uv pip compile requirements.txt --python-version 3.11 -o requirements.lock --no-header
 #   pip-audit -r requirements.lock --no-deps --disable-pip
 # Subir só um pacote: acrescentar --upgrade-package <nome> no compile.
-# Pendente (06/11): langchain 1.3.9 / langsmith 0.8.18 / langgraph-sdk 0.4.4 (4 CVEs)
-# exigem websockets>=14, travado abaixo por causa do transfer_data_task AttributeError.
 
 # Django
 Django>=5.2,<6.0
@@ -19,7 +17,11 @@ drf-nested-routers
 channels>=4.0.0
 channels-redis>=4.1.0
 daphne>=4.0.0
-websockets>=12.0,<14.0  # Pin to avoid transfer_data_task AttributeError
+# A trava <14 (transfer_data_task AttributeError) era do protocolo LEGADO do
+# websockets (websockets.legacy), que o uvicorn antigo usava em --ws auto. O
+# uvicorn atual (0.54) usa a implementação sans-I/O e o daphne usa autobahn;
+# conexão real testada em 06/11. Trava em apps/core/tests/test_dependencias_websocket.py.
+websockets>=15.0
 
 # Database
 psycopg2-binary>=2.9.9
@@ -79,7 +81,10 @@ Pillow>=10.0.0
 phonenumbers>=8.13
 
 # Langchain & AI (Native - sem Langflow)
-langchain>=0.3.0
+# Pisos de segurança (06/11): PYSEC-2026-2192, PYSEC-2026-4240, CVE-2026-59152.
+langchain>=1.3.9
+langgraph-sdk>=0.4.4
+langsmith>=0.8.18
 langchain-openai>=0.2.0
 langchain-community>=0.3.0
 langchain-core>=0.3.0
