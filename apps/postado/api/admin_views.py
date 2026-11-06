@@ -14,7 +14,7 @@ class AdminDashboardView(APIView):
     permission_classes = [IsPostadoAdmin]
 
     def get(self, request):
-        review_queue = PostadoPack.objects.filter(status='review').select_related('client')
+        review_queue = PostadoPack.objects.filter(status='review').select_related('client').prefetch_related('posts')
         return Response({
             'total_clients': PostadoClient.objects.count(),
             'active_clients': PostadoClient.objects.filter(status='active').count(),
@@ -28,7 +28,7 @@ class AdminClientListView(APIView):
     permission_classes = [IsPostadoAdmin]
 
     def get(self, request):
-        clients = PostadoClient.objects.all()
+        clients = PostadoClient.objects.prefetch_related('packs')
         return Response(PostadoClientListSerializer(clients, many=True).data)
 
 
@@ -42,7 +42,7 @@ class AdminClientDetailView(APIView):
 
     def get(self, request, client_id):
         try:
-            client = PostadoClient.objects.prefetch_related('packs').get(id=client_id)
+            client = PostadoClient.objects.prefetch_related('packs__posts').get(id=client_id)
         except PostadoClient.DoesNotExist:
             return Response({'error': 'not found'}, status=404)
         return Response(PostadoClientAdminSerializer(client).data)
