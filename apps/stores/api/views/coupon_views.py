@@ -33,6 +33,19 @@ class StoreCouponViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             except (ValueError, AttributeError):
                 qs = qs.filter(store__slug=store_param)
 
+        params = self.request.query_params
+        ativo = params.get('is_active')
+        if ativo in ('true', 'false'):
+            qs = qs.filter(is_active=(ativo == 'true'))
+        tipo = params.get('discount_type')
+        if tipo:
+            qs = qs.filter(discount_type=tipo)
+        vencido = params.get('expired')
+        if vencido == 'true':
+            qs = qs.filter(valid_until__lt=timezone.now())
+        elif vencido == 'false':
+            qs = qs.filter(valid_until__gte=timezone.now())
+
         return qs.select_related('store').order_by('-created_at')
     
     def get_serializer_class(self):
