@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('stores', '0102_combo_acrescimo_da_opcao'),
+        ('stores', '0103_valor_pago_pela_plataforma'),
     ]
 
     operations = [
