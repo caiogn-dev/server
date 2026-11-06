@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 VARIAVEIS_CONHECIDAS = frozenset({
     # loja
-    'customer_name', 'company_name', 'store_name', 'website_url', 'menu_url',
+    'customer_name', 'nome', 'company_name', 'store_name', 'website_url', 'menu_url',
     'business_hours_today',
     # conversa
     'phone_number', 'phone', 'order_id',
@@ -70,10 +70,28 @@ def variaveis_da_loja(perfil) -> dict:
     }
 
 
+def com_apelidos_de_nome(valores: dict) -> dict:
+    """`{nome}`, `{customer_name}` e `{primeiro_nome}` valem uns pelos outros.
+
+    Formato canônico: `{customer_name}` (nome completo) e `{primeiro_nome}`.
+    `{nome}` é apelido do nome completo. Valor explícito nunca é sobrescrito.
+    """
+    saida = dict(valores)
+    completo = next((str(saida[k]).strip() for k in ('customer_name', 'nome') if saida.get(k) not in (None, '')), '')
+    if not completo and saida.get('primeiro_nome') not in (None, ''):
+        completo = str(saida['primeiro_nome']).strip()
+    if completo:
+        saida.setdefault('customer_name', completo)
+        saida.setdefault('nome', completo)
+        saida.setdefault('primeiro_nome', completo.split()[0])
+    return saida
+
+
 def preencher(texto: str, contexto: dict, perfil=None) -> str:
     """Troca as chaves: contexto do envio > dados da loja > vazio."""
     valores = {k: v for k, v in variaveis_da_loja(perfil).items() if v not in (None, '')}
     valores.update({k: v for k, v in (contexto or {}).items() if v not in (None, '')})
+    valores = com_apelidos_de_nome(valores)
 
     def _troca(m):
         chave = m.group(1)
