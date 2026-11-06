@@ -123,6 +123,90 @@ def ler_extrato(texto: str, data_padrao: date | None = None) -> list[LinhaExtrat
     return linhas
 
 
+# ── Texto copiado do 99store ──────────────────────────────────────────────
+# O dono copia a lista de pedidos da tela do 99store e cola. Cada pedido vem
+# num bloco: "#6" / "06 de nov. 11:18" / "R$44,99" (venda) / "R$29,05"
+# (recebido) / "Concluído".
+
+_MESES = {'jan': 1, 'fev': 2, 'mar': 3, 'abr': 4, 'mai': 5, 'jun': 6,
+          'jul': 7, 'ago': 8, 'set': 9, 'out': 10, 'nov': 11, 'dez': 12}
+_NUMERO = re.compile(r'^#\s*(\d+)$')
+_DIA = re.compile(r'^(\d{1,2})\s+de\s+([a-z]{3})')
+_VALOR = re.compile(r'^-?\s*r\$\s*-?[\d.]+,\d{2}$')
+
+
+def parece_colado(texto: str) -> bool:
+    return any(_NUMERO.match(l.strip()) for l in (texto or '').splitlines())
+
+
+def ler_texto_colado(texto: str, ano: int | None = None, hoje: date | None = None) -> list[LinhaExtrato]:
+    """Blocos copiados do 99store → linhas. Sem ano no texto: o mais recente
+    que não cai no futuro (dezembro lido em janeiro é do ano anterior)."""
+    hoje = hoje or date.today()
+    partes = []
+    for bruta in (texto or '').splitlines():
+        partes.extend(p.strip() for p in re.split(r'\t| / ', bruta) if p.strip())
+
+    blocos, atual = [], None
+    for n, parte in enumerate(partes, start=1):
+        numero = _NUMERO.match(parte)
+        if numero:
+            atual = {'n': n, 'pedido': numero.group(1), 'data': None, 'valores': []}
+            blocos.append(atual)
+            continue
+        if atual is None:
+            continue
+        minusculo = _sem_acento(parte)
+        dia = _DIA.match(minusculo)
+        if dia and atual['data'] is None and dia.group(2) in _MESES:
+            mes, d = _MESES[dia.group(2)], int(dia.group(1))
+            a = ano or (hoje.year if (mes, d) <= (hoje.month, hoje.day) else hoje.year - 1)
+            try:
+                atual['data'] = date(a, mes, d)
+            except ValueError:
+                pass
+        elif _VALOR.match(minusculo):
+            atual['valores'].append(_dinheiro(parte))
+
+    linhas = []
+    for b in blocos:
+        if not b['valores']:
+            continue
+        venda, recebido = (b['valores'][0], b['valores'][1]) if len(b['valores']) >= 2 else (None, b['valores'][0])
+        linhas.append(LinhaExtrato(numero_da_linha=b['n'], pedido=b['pedido'], data=b['data'],
+                                   venda=venda, recebido=recebido))
+    return linhas
+
+
+def ler_planilha(conteudo: bytes, data_padrao: date | None = None) -> list[LinhaExtrato]:
+    """Planilha .xlsx (1ª aba, 1ª linha = cabeçalho) → linhas, pelo mesmo leitor do CSV."""
+    from openpyxl import load_workbook
+    try:
+        wb = load_workbook(io.BytesIO(conteudo), read_only=True, data_only=True)
+    except Exception as exc:  # zip/xml inválido: arquivo não é planilha
+        raise ValueError('Não consegui abrir a planilha.') from exc
+    saida = io.StringIO()
+    escritor = csv.writer(saida, delimiter=';')
+    for linha in wb.worksheets[0].iter_rows(values_only=True):
+        celulas = []
+        for valor in linha:
+            if valor is None:
+                celulas.append('')
+            elif isinstance(valor, float):
+                celulas.append(f'{valor:.2f}')
+            else:
+                celulas.append(str(valor))
+        escritor.writerow(celulas)
+    return ler_extrato(saida.getvalue(), data_padrao=data_padrao)
+
+
+def ler_qualquer(texto: str, data_padrao: date | None = None, hoje: date | None = None) -> list[LinhaExtrato]:
+    """CSV com cabeçalho ou texto colado do 99store, o que vier."""
+    if parece_colado(texto):
+        return ler_texto_colado(texto, ano=data_padrao.year if data_padrao else None, hoje=hoje)
+    return ler_extrato(texto, data_padrao=data_padrao)
+
+
 # ── Conciliação ───────────────────────────────────────────────────────────
 
 def _achar_pedido(store, linha: LinhaExtrato):
@@ -145,8 +229,10 @@ def _financeiro(pedido) -> dict:
     return dict(fin) if isinstance(fin, dict) else p99.financeiro_do_preco({})
 
 
-def conciliar(store, linhas: list[LinhaExtrato], gravar: bool = True) -> dict:
-    """Grava recebido e comissão de cada pedido do extrato. Reimportar não muda nada."""
+def conciliar(store, linhas: list[LinhaExtrato], gravar: bool = True, fonte: str = 'extrato') -> dict:
+    """Grava recebido e comissão de cada pedido do extrato. Reimportar não muda nada.
+
+    `fonte`: 'extrato' (CSV/planilha/texto do 99store) ou 'api' (API financeira)."""
     conciliados, sem_pedido, divergentes = [], [], []
     for linha in linhas:
         pedido = _achar_pedido(store, linha)
@@ -162,7 +248,7 @@ def conciliar(store, linhas: list[LinhaExtrato], gravar: bool = True) -> dict:
             novo['venda_cardapio'] = str(venda)
         novo['recebido'] = str(linha.recebido)
         novo['comissao_taxas'] = str(venda - linha.recebido) if venda is not None else None
-        novo['fonte_recebido'] = 'extrato'
+        novo['fonte_recebido'] = fonte
         if linha.venda is not None:
             novo['venda_extrato'] = str(linha.venda)
         conciliados.append((linha, pedido))

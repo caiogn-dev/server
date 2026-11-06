@@ -706,3 +706,40 @@ def avisar_status_a_99(self, order_id: str, novo_status: str, motivo: str = ''):
         pedidos_da_99.avisar_status(pedido, novo_status, motivo)
     except pedidos_da_99.ErroDa99 as exc:
         raise self.retry(exc=exc)
+
+
+@shared_task(name='apps.stores.tasks.conciliar_repasse_da_99', ignore_result=True)
+def conciliar_repasse_da_99(dia: str | None = None):
+    """Diária (beat, 06:00): busca na API financeira da 99 o repasse dos 7 dias
+    até ontem e grava o recebido de cada pedido. Só loja com pedido da 99 na
+    janela; erro numa loja não trava as outras. Devolve {slug: conciliados | {'erro'}}."""
+    from datetime import date, timedelta
+
+    from django.utils import timezone
+
+    from apps.stores.models import Store, StoreOrder
+    from apps.stores.services import pedidos_da_99, repasse_99_api
+
+    try:
+        pedidos_da_99._credenciais()
+    except pedidos_da_99.ErroDa99:
+        return {}
+    alvo = date.fromisoformat(dia) if dia else timezone.localdate() - timedelta(days=1)
+    inicio = alvo - timedelta(days=repasse_99_api.JANELA_DIAS - 1)
+    lojas = Store.objects.filter(id__in=StoreOrder.objects.filter(
+        source=pedidos_da_99.PROVEDOR, created_at__date__gte=inicio, created_at__date__lte=alvo,
+    ).values('store_id'))
+
+    resumo = {}
+    for loja in lojas:
+        try:
+            resultado = repasse_99_api.conciliar_pela_api(loja, alvo)
+        except (pedidos_da_99.ErroDa99, requests.RequestException) as exc:
+            logger.warning('99food: repasse de %s até %s não veio: %s', loja.slug, alvo, exc)
+            resumo[loja.slug] = {'erro': str(exc)[:300]}
+            continue
+        resumo[loja.slug] = len(resultado['conciliados'])
+        if resultado['sem_pedido'] or resultado['divergentes']:
+            logger.info('99food: repasse de %s: %s sem pedido, %s com venda divergente', loja.slug,
+                        len(resultado['sem_pedido']), len(resultado['divergentes']))
+    return resumo
