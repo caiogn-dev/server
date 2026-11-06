@@ -184,10 +184,8 @@ class StoreService:
         products = StoreProduct.objects.filter(store=store)
         total_products = products.count()
         active_products = products.filter(status='active').count()
-        low_stock_products = products.filter(
-            track_stock=True,
-            stock_quantity__lte=models.F('low_stock_threshold')
-        ).count()
+        # Régua única de "itens para repor" (no ar + controla estoque + no mínimo).
+        low_stock_products = metrics.indicadores.itens_para_repor(products).count()
         
         # Customer stats
         total_customers = StoreCustomer.objects.filter(store=store).count()

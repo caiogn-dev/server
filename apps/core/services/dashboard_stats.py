@@ -149,12 +149,9 @@ class DashboardStatsAggregator:
         }
 
     def _calculate_low_stock_count(self) -> int:
-        return StoreProduct.objects.filter(
-            store=self.store,
-            status=StoreProduct.ProductStatus.ACTIVE,
-            track_stock=True,
-            stock_quantity__lte=F('low_stock_threshold'),
-        ).count()
+        from apps.stores.metrics.indicadores import itens_para_repor
+
+        return itens_para_repor(StoreProduct.objects.filter(store=self.store)).count()
 
     def _avg_daily(self, revenue: Decimal, days: int) -> float:
         if days <= 0:

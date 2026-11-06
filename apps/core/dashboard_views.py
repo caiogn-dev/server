@@ -219,13 +219,8 @@ class DashboardOverviewView(APIView):
         # sistema fecha conversa, então ele conta a base histórica inteira. A
         # home chegou a anunciar "208 conversas em aberto — cliente esperando
         # resposta" quando havia 5. Alerta que nunca muda é alerta que ninguém lê.
-        conversations_waiting_reply = conversations_qs.filter(
-            last_customer_message_at__isnull=False,
-            last_customer_message_at__gte=now - timedelta(hours=48),
-        ).filter(
-            Q(last_agent_message_at__isnull=True)
-            | Q(last_customer_message_at__gt=F('last_agent_message_at'))
-        ).count()
+        from apps.stores.metrics.indicadores import esperando_resposta
+        conversations_waiting_reply = esperando_resposta(conversations_qs, now).count()
 
         # Orders metrics
         orders_by_status = dict(
@@ -467,11 +462,8 @@ class DashboardProjectHealthView(APIView):
             status__in=[Conversation.ConversationStatus.OPEN, Conversation.ConversationStatus.PENDING],
         ).count()
 
-        low_stock = products_qs.filter(
-            status=StoreProduct.ProductStatus.ACTIVE,
-            track_stock=True,
-            stock_quantity__lte=F('low_stock_threshold'),
-        ).count()
+        from apps.stores.metrics.indicadores import itens_para_repor
+        low_stock = itens_para_repor(products_qs).count()
         out_of_stock = products_qs.filter(
             status=StoreProduct.ProductStatus.ACTIVE,
             track_stock=True,

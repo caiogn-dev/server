@@ -16,7 +16,7 @@ NOT leak into the aggregate (tenant isolation).
 from decimal import Decimal
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient, APITestCase
-from apps.stores.models import Store, StoreCustomer
+from apps.stores.models import Store, StoreCustomer, StoreOrder
 
 User = get_user_model()
 
@@ -65,6 +65,14 @@ class CustomerStatsActionTestCase(APITestCase):
     def _make_customer(self, store, email, total_orders, total_spent, is_active):
         user = User.objects.create_user(username=email, email=email,
                                         password='x')
+        # Receita sai dos PEDIDOS pela régua única (06/11), não do total_spent
+        # gravado no cadastro — por isso o cenário cria o pedido pago.
+        if total_spent:
+            StoreOrder.objects.create(
+                store=store, customer_name=email, customer_email=email,
+                customer_phone='5563999000000', subtotal=total_spent, total=total_spent,
+                status='delivered', payment_status='paid',
+            )
         return StoreCustomer.objects.create(
             store=store,
             user=user,

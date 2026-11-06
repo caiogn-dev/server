@@ -12,6 +12,7 @@ from django.utils import timezone
 
 from apps.stores.metrics import soma_de_venda
 from apps.stores.metrics.definicoes import STATUS_SEM_RECEITA
+from apps.stores.metrics.indicadores import LIMITE_ESQUECIDO_MINUTOS
 from apps.stores.models import StoreOrder
 
 
@@ -28,7 +29,12 @@ def ranking_da_operacao(store, dias: int = 30, agora=None) -> dict:
         .annotate(
             entregas=Count('id'),
             frete=Sum('delivery_fee'),
-            tempo_medio=Avg(tempo, filter=Q(delivered_at__isnull=False, out_for_delivery_at__isnull=False)),
+            # Entrega "aberta" mais de 24 h é pedido esquecido, não tempo de
+            # rota — fica fora da média (régua de metrics.indicadores).
+            tempo_medio=Avg(tempo, filter=Q(
+                delivered_at__isnull=False, out_for_delivery_at__isnull=False,
+                delivered_at__lte=F('out_for_delivery_at') + timedelta(minutes=LIMITE_ESQUECIDO_MINUTOS),
+            )),
         )
         .order_by('-entregas', 'entregador__nome')
     )

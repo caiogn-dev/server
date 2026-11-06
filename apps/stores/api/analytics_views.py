@@ -83,13 +83,6 @@ def _round2(value):
     return round(float(value or 0), 2)
 
 
-def _p90(sorted_values):
-    if not sorted_values:
-        return None
-    idx = int(round(0.9 * (len(sorted_values) - 1)))
-    return sorted_values[idx]
-
-
 class HeatmapReportView(BaseAnalyticsView):
     """Grade dia-da-semana × hora (horários de pico) em fuso local."""
 
@@ -129,14 +122,15 @@ class AbcReportView(BaseAnalyticsView):
         store, start, end, err = self.resolve(request)
         if err:
             return err
-        rows = list(
-            StoreOrderItem.objects.filter(
-                order__in=self.paid_orders(store, start, end)
+        from apps.stores.metrics.indicadores import ranking_de_produtos
+        # Um produto, uma linha (agrupava pelo nome gravado no item).
+        rows = [
+            {'product_id': r['produto_id'], 'product_name': r['nome'], 'quantity': r['quantidade'],
+             'revenue': r['receita'], 'order_count': r['pedidos']}
+            for r in ranking_de_produtos(
+                StoreOrderItem.objects.filter(order__in=self.paid_orders(store, start, end)),
             )
-            .values('product_name')
-            .annotate(quantity=Sum('quantity'), revenue=Sum('subtotal'), order_count=Count('order', distinct=True))
-            .order_by('-revenue')
-        )
+        ]
         total_revenue = sum((r['revenue'] or Decimal('0')) for r in rows) or Decimal('0')
         products = []
         cumulative = Decimal('0')
@@ -146,6 +140,7 @@ class AbcReportView(BaseAnalyticsView):
             pct = float(revenue / total_revenue * 100) if total_revenue else 0.0
             cum_pct = float(cumulative / total_revenue * 100) if total_revenue else 0.0
             products.append({
+                'product_id': r['product_id'],
                 'product_name': r['product_name'],
                 'quantity': r['quantity'],
                 'revenue': _round2(revenue),
@@ -350,24 +345,23 @@ class SlaReportView(BaseAnalyticsView):
             .exclude(status__in=('cancelled', 'failed', 'refunded'))
             .values(*fields)
         )
-        durations = defaultdict(list)
+        # Média e p90 sobre a MESMA amostra, sem os pedidos esquecidos abertos
+        # (> 24 h na etapa), que voltam à parte em `esquecidos`. Um pedido de
+        # 42 dias puxava a média para horas e deixava o p90 abaixo dela.
+        from apps.stores.metrics.indicadores import TempoDeEtapa
+        durations = defaultdict(TempoDeEtapa)
         for row in rows:
             for stage, start_field, end_field in SLA_STAGES:
                 begin = row[start_field]
                 finish = row[end_field] if end_field else (row['delivered_at'] or row['picked_up_at'])
                 if begin and finish and finish >= begin:
-                    durations[stage].append((finish - begin).total_seconds() / 60)
+                    durations[stage].registrar((finish - begin).total_seconds() / 60)
 
-        stages = []
-        for stage, _, _ in SLA_STAGES:
-            values = sorted(durations[stage])
-            stages.append({
-                'stage': stage,
-                'count': len(values),
-                'avg_minutes': round(sum(values) / len(values), 1) if values else None,
-                'p90_minutes': round(_p90(values), 1) if values else None,
-            })
-        return Response({'stages': stages})
+        stages = [{'stage': stage, **durations[stage].resumo()} for stage, _, _ in SLA_STAGES]
+        return Response({
+            'stages': stages,
+            'esquecidos': max((s['esquecidos'] for s in stages), default=0),
+        })
 
 
 class FinanceReportView(BaseAnalyticsView):
@@ -698,9 +692,9 @@ class OverviewReportView(BaseAnalyticsView):
         total = all_orders.count()
         cancelled = all_orders.filter(status__in=('cancelled', 'failed', 'refunded')).count()
 
-        new_customers = StoreCustomer.objects.filter(
-            store=store, created_at__range=(start_dt, end_dt)
-        ).count()
+        # Primeira compra paga no período — régua única (contava cadastro criado).
+        from apps.stores.metrics.indicadores import clientes_novos
+        new_customers = clientes_novos(store, start, end)
         rating = StoreReview.objects.filter(
             store=store, created_at__range=(start_dt, end_dt)
         ).aggregate(avg=Avg('rating'), count=Count('id'))

@@ -95,13 +95,24 @@ class TestFilaHumana:
         assert corpo['esperando'] == []
         assert [e['nome'] for e in corpo['em_atendimento']] == ['Atendida']
 
-    def test_conversa_do_bot_nao_entra(self, cliente, conta):
+    def test_conversa_do_bot_sem_resposta_entra_na_fila(self, cliente, conta):
+        """Régua única do painel (06/11): cliente falou por último, sem resposta,
+        48 h — em qualquer modo. Antes o Início contava a conversa do bot e esta
+        tela não, e os números não batiam."""
         _conversa(conta, '5563999990105', humana=False,
                   cliente_escreveu=timezone.now() - timedelta(minutes=3))
 
         corpo = cliente.get(URL).json()
 
-        assert corpo['esperando'] == [] and corpo['em_atendimento'] == []
+        assert [e['modo'] for e in corpo['esperando']] == ['auto']
+        assert corpo['em_atendimento'] == []
+
+    def test_quem_espera_ha_mais_de_48h_sai_da_fila(self, cliente, conta):
+        _conversa(conta, '5563999990108', cliente_escreveu=timezone.now() - timedelta(days=3))
+
+        corpo = cliente.get(URL).json()
+
+        assert corpo['esperando'] == [] and corpo['resumo']['esperando'] == 0
 
     def test_humana_parada_de_outro_dia_nao_polui_a_fila(self, cliente, conta):
         """Sem cliente esperando e sem atendimento hoje: volta ao bot na próxima mensagem."""

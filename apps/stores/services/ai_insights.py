@@ -215,12 +215,13 @@ def compute_daily_stats(store, day=None) -> dict:
     count, revenue = day_numbers(day)
     prev_count, prev_revenue = day_numbers(prev_day)
 
-    top_products = list(
-        itens_de_receita(loja=store, inicio=day, fim=day)
-        .values('product_name')
-        .annotate(qty=Sum('quantity'), total=Sum('subtotal'))
-        .order_by('-qty')[:3]
-    )
+    from apps.stores.metrics.indicadores import ranking_de_produtos
+    top_products = [
+        {'product_name': r['nome'], 'qty': r['quantidade'], 'total': r['receita']}
+        for r in ranking_de_produtos(
+            itens_de_receita(loja=store, inicio=day, fim=day), ordenar_por='quantidade', limite=3,
+        )
+    ]
 
     hours = pedidos_de_receita(queryset=day_qs(day)).values_list('created_at', flat=True)
     hour_counts = {}
@@ -539,7 +540,6 @@ def generate_daily_summary(store, day=None) -> dict:
     # para HOJE" sem dizer que dia é hoje é convite à invenção.
     hoje = timezone.localtime()
     dia_de_hoje = DIAS_DA_SEMANA[hoje.weekday()]
-    media_de_hoje = (forecast.get('weekday_avg') or {}).get(dia_de_hoje)
 
     # O MESMO vale para ontem. Em 02/out/2026 (sexta) o resumo saiu com
     # "Ontem teve R$ 409,61, bem acima da média de sexta" — os números eram
@@ -550,20 +550,37 @@ def generate_daily_summary(store, day=None) -> dict:
     except (TypeError, ValueError):
         dia_dos_dados = (hoje - timedelta(days=1)).date()
     dia_de_ontem = DIAS_DA_SEMANA[dia_dos_dados.weekday()]
-    media_de_ontem = (forecast.get('weekday_avg') or {}).get(dia_de_ontem)
+    # Média de referência ÚNICA do Início (a mesma do vigia "Resumo da manhã"):
+    # receita das 4 mesmas dias-da-semana anteriores. Antes saía de
+    # `weekday_avg` (28 dias por data de pagamento, incluindo o próprio dia) e
+    # o card dizia "bem abaixo da média de quinta" enquanto o vigia dizia
+    # "36% acima da média das últimas 4 quintas".
+    from apps.stores.metrics.indicadores import media_de_referencia, variacao_pct
+    try:
+        ref = media_de_referencia(store, dia_dos_dados)
+        v = variacao_pct(stats.get('revenue'), ref['receita'])
+        referencia = {
+            'receita': float(ref['receita']),
+            'janela': ref['janela'],
+            'dias': ref['dias'],
+            'variacao_pct': round(v) if v is not None else None,
+        }
+    except Exception as exc:  # o resumo degrada sem a comparação, não quebra
+        logger.warning('[ai_insights] falha na média de referência: %s', exc)
+        referencia = None
+    media_de_ontem = referencia['receita'] if referencia and referencia['receita'] > 0 else None
 
     prompt = (
         "Você é o analista de negócios do dono do restaurante "
         f"\"{store.name}\". Responda APENAS com JSON válido, sem texto antes ou "
         "depois, sem cercas de código.\n\n"
         f"HOJE é {dia_de_hoje}, {hoje.strftime('%d/%m/%Y')}"
-        + (f" (média histórica de {dia_de_hoje}: R$ {media_de_hoje:.2f})"
-           if media_de_hoje is not None else "")
         + ".\n"
         f"ONTEM foi {dia_de_ontem}, {dia_dos_dados.strftime('%d/%m/%Y')} — é o dia dos "
         "\"Dados de ontem\" abaixo"
-        + (f"; compare ontem com a média histórica de {dia_de_ontem}: "
-           f"R$ {media_de_ontem:.2f}" if media_de_ontem is not None else "")
+        + (f"; compare ontem SÓ com esta média: R$ {media_de_ontem:.2f}, a média das "
+           f"{referencia['janela']} (cite a janela: \"média das {referencia['janela']}\")"
+           if media_de_ontem is not None else "")
         + ".\n\n"
         "Formato:\n"
         '{"blocos":[{"tipo":"...","titulo":"...","texto":"..."}]}\n\n'
@@ -620,6 +637,7 @@ def generate_daily_summary(store, day=None) -> dict:
     return {
         'stats': stats,
         'forecast': forecast,
+        'referencia': referencia,
         'blocos': blocos,
         # Mantido para WhatsApp e e-mail, que só sabem ler string. Sai DOS
         # blocos, não de uma segunda chamada ao modelo.

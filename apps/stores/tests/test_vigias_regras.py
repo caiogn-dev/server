@@ -78,7 +78,9 @@ class TestResumoDaManha:
         f = fatos[0]
         assert f.chave == 'resumo:2026-10-15'
         assert '13 pedidos' in f.texto
-        assert '30% acima' in f.texto  # 13 contra média 10
+        # Receita contra a média de referência única (06/11): R$ 490,87 contra
+        # R$ 369,90 das últimas 4 quintas — a mesma média do resumo da IA.
+        assert '33% acima da média das últimas 4 quintas (R$ 369,90)' in f.texto
         assert 'Queridinha (12)' in f.texto
         assert f.dados['base_dias'] == 4
 
