@@ -154,7 +154,8 @@ def disparar(store, agora=None, forcar=False, criado_por=None):
     if not contatos:
         return None, 'sem_contatos'
 
-    nome = f"Promoção do dia — {plano['quando']} {plano['dia']}"
+    dia_br = '/'.join(reversed(plano['dia'].split('-')))  # aaaa-mm-dd -> dd/mm/aaaa
+    nome = f"Promoção do dia — {plano['quando']} {dia_br}"
     servico = CampaignService()
     modo = cfg['modo']
     template = None
