@@ -145,6 +145,20 @@ class ApiFinanceiraTests(Base):
         self.assertEqual(post.call_args.kwargs['json'], {'retailer': 'app-teste', 'secret': 'segredo-teste'})
 
     @mock.patch.object(repasse_99_api.requests, 'post')
+    def test_sem_permissao_diz_o_motivo_da_99(self, post, *_):
+        # Resposta real de 06/11: o app tem token, mas não a API financeira.
+        post.side_effect = [_token(), _resposta({
+            'error_code': 10050,
+            'error_description': 'This app does not have the permission to call this API. '
+                                 'Please contact the platform to request permission first.',
+            'Details': None, 'request_id': 'x',
+        })]
+        with self.assertRaises(p99.ErroDa99) as erro:
+            repasse_99_api.lancamentos(self.store, date(2026, 11, 6), date(2026, 11, 6))
+        self.assertIn('10050', str(erro.exception))
+        self.assertIn('permission', str(erro.exception))
+
+    @mock.patch.object(repasse_99_api.requests, 'post')
     def test_lancamentos_pagina_e_manda_loja_e_datas(self, post, *_):
         post.side_effect = [
             _token(),

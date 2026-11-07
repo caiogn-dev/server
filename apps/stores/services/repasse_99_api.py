@@ -73,7 +73,12 @@ def _pagina(store, inicio: date, fim: date, pagina: int) -> dict:
             continue
         corpo = p99._ler(resposta)
         if corpo.get('errno') != 0:
-            raise p99.ErroDa99(f"99 recusou o extrato: {corpo.get('errmsg') or corpo.get('errno')}")
+            # O gateway da 99 responde em dois formatos: errno/errmsg e, nos
+            # bloqueios (ex.: 10050 = app sem permissão da API financeira),
+            # error_code/error_description.
+            codigo = corpo.get('errno') if corpo.get('errno') is not None else corpo.get('error_code')
+            motivo = corpo.get('errmsg') or corpo.get('error_description') or ''
+            raise p99.ErroDa99(f"99 recusou o extrato ({codigo}): {motivo}".rstrip(': '))
         dados = corpo.get('data')
         return dados if isinstance(dados, dict) else {}
     raise p99.ErroDa99('99 recusou o token financeiro')
