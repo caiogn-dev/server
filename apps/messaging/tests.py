@@ -102,3 +102,51 @@ class MessengerAccountEncryptionTests(TestCase):
         self.assertNotIn("super-secret", raw_token)
         self.assertTrue(raw_secret.startswith("gAAA"), raw_secret)
         self.assertNotIn("my-app-secret", raw_secret)
+
+
+class MessengerConversationAccountScopeTests(TestCase):
+    """O campo `account` da conversa só aceita contas do próprio usuário."""
+
+    def setUp(self):
+        user_model = get_user_model()
+        self.owner = user_model.objects.create_user(
+            username="msg-owner", email="owner@example.com", password="pass"
+        )
+        self.attacker = user_model.objects.create_user(
+            username="msg-attacker", email="attacker@example.com", password="pass"
+        )
+        self.owner_account = MessengerAccount.objects.create(
+            user=self.owner, page_id="page-owner", page_name="Owner", page_access_token="t"
+        )
+        self.attacker_account = MessengerAccount.objects.create(
+            user=self.attacker, page_id="page-att", page_name="Att", page_access_token="t"
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.attacker)
+
+    def test_cannot_create_conversation_in_foreign_account(self):
+        url = reverse("messaging:messenger-conversations-list")
+        response = self.client.post(
+            url, {"account": str(self.owner_account.id), "psid": "x"}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(
+            MessengerConversation.objects.filter(account=self.owner_account).exists()
+        )
+
+    def test_cannot_move_conversation_to_foreign_account(self):
+        conv = MessengerConversation.objects.create(account=self.attacker_account, psid="p")
+        url = reverse("messaging:messenger-conversations-detail", args=[conv.id])
+        response = self.client.patch(
+            url, {"account": str(self.owner_account.id)}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+        conv.refresh_from_db()
+        self.assertEqual(conv.account_id, self.attacker_account.id)
+
+    def test_can_create_conversation_in_own_account(self):
+        url = reverse("messaging:messenger-conversations-list")
+        response = self.client.post(
+            url, {"account": str(self.attacker_account.id), "psid": "ok"}, format="json"
+        )
+        self.assertEqual(response.status_code, 201)
