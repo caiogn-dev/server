@@ -110,6 +110,19 @@ class MessengerConversationSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
+    def get_fields(self):
+        fields = super().get_fields()
+        # `account` só aceita páginas do próprio usuário: sem isto, qualquer
+        # autenticado criava/movia conversas para a conta de outro tenant.
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if "account" in fields and not fields["account"].read_only:
+            if user is not None and user.is_authenticated:
+                fields["account"].queryset = MessengerAccount.objects.filter(user=user)
+            else:
+                fields["account"].queryset = MessengerAccount.objects.none()
+        return fields
+
     def get_last_message(self, obj):
         last_msg = obj.messages.order_by("-created_at").first()
         if not last_msg:
