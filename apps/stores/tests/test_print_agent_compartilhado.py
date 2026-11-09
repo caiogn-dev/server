@@ -23,7 +23,7 @@ class AgentCompartilhadoTest(APITestCase):
         self.dona_ag = User.objects.create_user(username='ag', email='ag@t.local', password='x')
         self.ce = Store.objects.create(name='Cê', slug='ce-t', owner=self.dona_ce, status='active')
         self.agriao = Store.objects.create(name='Agrião', slug='agriao-t', owner=self.dona_ag, status='active')
-        _, p, h = StorePrintAgent.generate_api_key()
+        self.chave, p, h = StorePrintAgent.generate_api_key()
         self.zebra = StorePrintAgent.objects.create(
             store=self.ce, name='pc desktop', slug='pc-ce', station='kitchen', imprime=['etiquetas'],
             printer_name='ZDesigner', api_key_prefix=p, api_key_hash=h)
@@ -72,3 +72,40 @@ class AgentCompartilhadoTest(APITestCase):
         self.assertIn(self.client.patch(base, {'name': 'roubado'}, format='json').status_code, (403, 404))
         self.zebra.refresh_from_db()
         self.assertEqual(self.zebra.name, 'pc desktop')
+
+    # 09/11: claim entregava a etiqueta da Agrião para a Elgin da Cê, mas
+    # complete/fail filtravam store=agent.store → 404 → job preso em claimed →
+    # vigia devolvia à fila após 5 min → a mesma etiqueta saía 3 vezes.
+    def _job_reivindicado(self):
+        self._compartilhar()
+        r = self._post()
+        self.assertEqual(r.status_code, 201, r.content)
+        job = claim_next_print_job(self.zebra)
+        self.assertIsNotNone(job)
+        return job
+
+    def _agent_post(self, url, dados):
+        self.client.force_authenticate(None)
+        return self.client.post(url, dados, format='json', HTTP_X_PRINT_AGENT_KEY=self.chave)
+
+    def test_agent_confirma_impressao_da_etiqueta_compartilhada(self):
+        job = self._job_reivindicado()
+        r = self._agent_post(f'/api/v1/stores/print/jobs/{job.id}/complete/', {'printer_name': 'Elgin'})
+        self.assertEqual(r.status_code, 200, r.content)
+        job.refresh_from_db()
+        self.assertEqual(job.status, 'completed')
+
+    def test_agent_reporta_falha_da_etiqueta_compartilhada(self):
+        job = self._job_reivindicado()
+        r = self._agent_post(f'/api/v1/stores/print/jobs/{job.id}/fail/', {'error': 'sem papel', 'retryable': False})
+        self.assertEqual(r.status_code, 200, r.content)
+        job.refresh_from_db()
+        self.assertEqual(job.status, 'failed')
+
+    def test_agent_nao_confirma_job_de_outra_loja_que_nao_e_dele(self):
+        self._compartilhar()
+        alheio = StorePrintJob.objects.create(store=self.agriao, station='kitchen', payload={}, template='kitchen_ticket')
+        r = self._agent_post(f'/api/v1/stores/print/jobs/{alheio.id}/complete/', {})
+        self.assertEqual(r.status_code, 404)
+        alheio.refresh_from_db()
+        self.assertEqual(alheio.status, 'pending')

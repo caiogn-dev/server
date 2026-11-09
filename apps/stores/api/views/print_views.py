@@ -483,7 +483,11 @@ class PrintAgentCompleteJobView(APIView):
         job = (
             StorePrintJob.objects
             .select_related('store', 'claimed_by')
-            .filter(id=job_id, store=agent.store)
+            # Da loja dele OU de loja compartilhada que ele reivindicou/é alvo —
+            # o mesmo critério do claim (09/11: 404 aqui fazia a etiqueta da
+            # Agrião sair 3x na Elgin da Cê).
+            .filter(id=job_id)
+            .filter(Q(store=agent.store) | Q(target_agent=agent) | Q(claimed_by=agent))
             .first()
         )
         if not job:
@@ -513,7 +517,11 @@ class PrintAgentFailJobView(APIView):
         job = (
             StorePrintJob.objects
             .select_related('store', 'claimed_by')
-            .filter(id=job_id, store=agent.store)
+            # Da loja dele OU de loja compartilhada que ele reivindicou/é alvo —
+            # o mesmo critério do claim (09/11: 404 aqui fazia a etiqueta da
+            # Agrião sair 3x na Elgin da Cê).
+            .filter(id=job_id)
+            .filter(Q(store=agent.store) | Q(target_agent=agent) | Q(claimed_by=agent))
             .first()
         )
         if not job:
