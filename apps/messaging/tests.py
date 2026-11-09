@@ -150,3 +150,46 @@ class MessengerConversationAccountScopeTests(TestCase):
             url, {"account": str(self.attacker_account.id), "psid": "ok"}, format="json"
         )
         self.assertEqual(response.status_code, 201)
+
+
+class MessengerConversationListQueryCountTests(TestCase):
+    """A lista de conversas não faz queries por conversa (N+1 da última mensagem)."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="msg-perf", email="perf@example.com", password="pass"
+        )
+        self.account = MessengerAccount.objects.create(
+            user=self.user, page_id="page-perf", page_name="Perf", page_access_token="t"
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def _criar(self, n, offset=0):
+        for i in range(offset, offset + n):
+            conv = MessengerConversation.objects.create(account=self.account, psid=f"psid-{i}")
+            MessengerMessage.objects.create(conversation=conv, content=f"antiga {i}", is_from_page=False)
+            MessengerMessage.objects.create(conversation=conv, content=f"recente {i}", is_from_page=False)
+
+    def _contar(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        url = reverse("messaging:messenger-conversations-list")
+        with CaptureQueriesContext(connection) as ctx:
+            response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        rows = data["results"] if isinstance(data, dict) and "results" in data else data
+        return len(ctx), rows
+
+    def test_numero_de_queries_nao_cresce_com_conversas(self):
+        self._criar(2)
+        q2, _ = self._contar()
+        self._criar(4, offset=2)
+        q6, rows = self._contar()
+        self.assertEqual(q2, q6)
+        self.assertEqual(len(rows), 6)
+        for row in rows:
+            self.assertTrue(row["last_message"]["content"].startswith("recente"))
+            self.assertTrue(row["last_message_preview"].startswith("recente"))
