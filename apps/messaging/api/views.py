@@ -3,6 +3,7 @@ import hmac
 import logging
 
 from django.conf import settings
+from django.db.models import Prefetch
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status, viewsets
@@ -166,7 +167,17 @@ class MessengerConversationViewSet(viewsets.ModelViewSet):
         account_id = self.request.query_params.get("account")
         if account_id:
             queryset = queryset.filter(account_id=account_id)
-        return queryset.filter(account__user=self.request.user)
+        queryset = queryset.filter(account__user=self.request.user)
+        if self.action == "list":
+            # Evita N+1: o serializer lê a última mensagem de cada conversa.
+            queryset = queryset.prefetch_related(
+                Prefetch(
+                    "messages",
+                    queryset=MessengerMessage.objects.order_by("-created_at")[:1],
+                    to_attr="ultima_mensagem",
+                )
+            )
+        return queryset
 
     @action(detail=True, methods=["get"])
     def messages(self, request, pk=None):
