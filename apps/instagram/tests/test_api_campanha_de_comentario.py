@@ -94,3 +94,36 @@ def test_sortear_devolve_o_ganhador(cenario):
 
     assert r.status_code == 200
     assert r.data['ganhadores'][0]['username'] == 'ana'
+
+
+def test_lista_de_campanhas_nao_faz_query_por_campanha(cenario, django_assert_max_num_queries):
+    """`participando` vinha de um count() por campanha (N+1)."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    dono, _, conta, campanha, _ = cenario
+    url = '/api/v1/instagram/campanhas-de-comentario/'
+
+    def consultas():
+        with CaptureQueriesContext(connection) as ctx:
+            r = _cliente(dono).get(url)
+        assert r.status_code == 200
+        return len(ctx), r
+
+    antes, _ = consultas()
+    for i in range(5):
+        c = CampanhaDeComentario.objects.create(
+            account=conta, nome=f'C{i}', media_id=f'mx{i}', mensagem_dm='oi',
+        )
+        ParticipacaoNoComentario.objects.create(
+            campanha=c, comment_id=f'k{i}', usuario_id=f'u{i}', username='x', aceita=True,
+        )
+        ParticipacaoNoComentario.objects.create(
+            campanha=c, comment_id=f'z{i}', usuario_id=f'v{i}', username='y',
+            aceita=False, motivo='sem_palavra',
+        )
+    depois, r = consultas()
+
+    assert depois == antes
+    dados = r.data['results'] if 'results' in r.data else r.data
+    assert {d['nome']: d['participando'] for d in dados}['C0'] == 1
