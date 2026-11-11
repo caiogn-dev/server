@@ -304,3 +304,26 @@ def conferir_endereco_ao_criar_pedido(sender, instance, created, **kwargs):
                            instance.id, exc)
 
     transaction.on_commit(_enfileirar)
+
+
+@receiver(post_save, sender='stores.StoreOrder')
+def cotar_uber_em_sombra(sender, instance, created, **kwargs):
+    """Loja com `metadata.uber_sombra` cota cada entrega nova na Uber, sem despachar.
+
+    Serve para medir quanto a Uber cobraria contra o frete cobrado antes de
+    ligar o despacho de verdade. Fila + on_commit: o cliente não espera a Uber.
+    """
+    if not created or instance.delivery_method != 'delivery':
+        return
+    if (getattr(instance.store, 'metadata', None) or {}).get('uber_sombra') is not True:
+        return
+    order_id = str(instance.id)
+
+    def _enfileirar():
+        from apps.stores.tasks import cotar_uber_sombra
+        try:
+            cotar_uber_sombra.delay(order_id)
+        except Exception as exc:
+            logger.warning('cotar_uber_em_sombra: não enfileirou %s: %s', order_id, exc)
+
+    transaction.on_commit(_enfileirar)

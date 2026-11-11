@@ -743,3 +743,40 @@ def conciliar_repasse_da_99(dia: str | None = None):
             logger.info('99food: repasse de %s: %s sem pedido, %s com venda divergente', loja.slug,
                         len(resultado['sem_pedido']), len(resultado['divergentes']))
     return resumo
+
+
+@shared_task(bind=True, max_retries=0, ignore_result=True)
+def cotar_uber_sombra(self, order_id: str, origem: str = 'sombra'):
+    """Cota o pedido no Uber Direct e só GRAVA. Nunca chama entregador.
+
+    Um pedido tem no máximo uma cotação de cada origem: retry, aviso duplicado
+    ou rodar o histórico duas vezes não infla a média.
+    """
+    from apps.stores.models import StoreOrder, UberCotacao
+    from apps.stores.services.delivery_provider.base import DeliveryProviderError
+    from apps.stores.services.delivery_provider.uber_direct import UberDirectProvider, distancia_km
+
+    try:
+        order = StoreOrder.objects.select_related('store').get(id=order_id)
+    except StoreOrder.DoesNotExist:
+        return
+    if order.delivery_method != 'delivery':
+        return
+    if UberCotacao.objects.filter(order=order, origem=origem).exists():
+        return
+
+    store = order.store
+    registro = UberCotacao(
+        store=store, order=order, origem=origem, taxa_cobrada=order.delivery_fee,
+        distancia_km=distancia_km(store.latitude, store.longitude, order.delivery_lat, order.delivery_lng),
+    )
+    try:
+        c = UberDirectProvider().cotar(store, order)
+        registro.quote_id = c['quote_id']
+        registro.fee = c['fee']
+        registro.duracao_min = c['duracao_min']
+        registro.coleta_min = c['coleta_min']
+    except (DeliveryProviderError, requests.RequestException, KeyError, ValueError) as exc:
+        registro.erro = str(exc)[:1000]
+        logger.info('cotar_uber_sombra: pedido %s sem cotação: %s', order.order_number, exc)
+    registro.save()

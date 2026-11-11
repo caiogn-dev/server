@@ -57,6 +57,7 @@ from .printing import (
 # Team
 from .team import StoreTeamMember
 from .entregador import Entregador
+from .uber_cotacao import UberCotacao
 
 # Review
 from .review import StoreReview, StoreProductReview
@@ -82,6 +83,7 @@ from .vigia import VigiaAviso, VigiaConfig, VigiaEnvio
 
 __all__ = [
     'Entregador',
+    'UberCotacao',
     'StoreLote',
     'StoreBanner', 'MAXIMO_DE_BANNERS',
     'StoreIfoodIntegration',
