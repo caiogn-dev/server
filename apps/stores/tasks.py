@@ -466,7 +466,7 @@ def reconcile_pending_pix_payments():
     from django.core.cache import cache
 
     from apps.stores.api.webhooks import MercadoPagoWebhookView
-    from apps.stores.models import StorePayment
+    from apps.stores.models import StoreOrder, StorePayment
     from apps.stores.services import checkout_service, mp_orders
     from apps.stores.services.realtime_service import broadcast_order_event
 
@@ -509,6 +509,25 @@ def reconcile_pending_pix_payments():
         # pagamento de verdade, troca — assim o próximo ciclo (e o webhook do
         # MP, que casa por external_id) acertam de primeira.
         id_no_mp = str(payment.get('id') or sp.external_id)
+
+        # 11/nov (CE-2611118547, Cristiane): link de cartão aberto e pago no
+        # PIX. Esta cobrança achou o pagamento que OUTRA cobrança já registrou;
+        # ficava `pending` para sempre e, a cada hora (fim da chave de
+        # idempotência), o poller mandava outro "Pagamento Confirmado!".
+        if (
+            StorePayment.objects
+            .filter(external_id=id_no_mp, status=StorePayment.PaymentStatus.COMPLETED)
+            .exclude(pk=sp.pk)
+            .exists()
+        ):
+            sp.status = StorePayment.PaymentStatus.CANCELLED
+            sp.save(update_fields=['status', 'updated_at'])
+            logger.info(
+                'Reconcile PIX: cobrança %s duplicada de %s (já registrado) — cancelada',
+                sp.pk, id_no_mp,
+            )
+            continue
+
         if id_no_mp != sp.external_id:
             sp.external_id = id_no_mp
             sp.save(update_fields=['external_id', 'updated_at'])
@@ -521,6 +540,9 @@ def reconcile_pending_pix_payments():
         # inteiro e os demais pendentes do ciclo nem chegavam a ser consultados.
         # A chave também precisa ser devolvida, senão a próxima rodada pula este
         # pagamento achando que já foi processado.
+        ja_estava_pago = bool(
+            sp.order_id and sp.order.payment_status == StoreOrder.PaymentStatus.PAID
+        )
         try:
             order = checkout_service.process_payment_webhook(
                 id_no_mp, mp_status,
@@ -543,7 +565,8 @@ def reconcile_pending_pix_payments():
         )
         if order:
             broadcast_order_event(order)
-            if mp_status == 'approved':
+            # Confirmação só quando ESTA rodada fez o pedido virar pago.
+            if mp_status == 'approved' and not ja_estava_pago:
                 MercadoPagoWebhookView()._send_payment_confirmation_whatsapp(order)
 
     if checked:

@@ -363,6 +363,16 @@ class MercadoPagoWebhookView(APIView):
             if not order.customer_phone:
                 logger.info(f"No phone number for order {order.order_number}, skipping WhatsApp")
                 return
+
+            # Uma confirmação por pedido (11/nov, CE-2611118547: a Cristiane
+            # recebeu 5). Webhook do MP reenviado depois que a chave de 1h
+            # vence e o poller chegam aqui de novo; quem decide é a conversa.
+            from django.core.cache import cache
+            if _confirmacao_ja_enviada(order) or not cache.add(
+                f'confirmacao_pagamento:{order.id}', 1, timeout=24 * 3600,
+            ):
+                logger.info('Confirmação de %s já enviada — não repete', order.order_number)
+                return
             
             # Pelo canal das automáticas (dono, 05/10): sai como mensagem
             # normal só com a janela de 24 h aberta, respeita o modo humano e
@@ -416,6 +426,8 @@ Obrigado pela preferência! 🎉"""
                 },
             )
             if enviada is None:
+                # Não saiu: libera para uma próxima tentativa legítima.
+                cache.delete(f'confirmacao_pagamento:{order.id}')
                 logger.info(f"WhatsApp confirmation for {order.order_number} não saiu: modo humano ou fora da janela")
                 return
             logger.info(f"WhatsApp confirmation sent for order {order.order_number}")
@@ -424,6 +436,16 @@ Obrigado pela preferência! 🎉"""
             logger.exception("Falha ao enviar confirmação WhatsApp — pedido %s",
                              getattr(order, 'order_number', '?'))
             # Don't raise - webhook should not fail if message fails
+
+
+def _confirmacao_ja_enviada(order) -> bool:
+    """A conversa já tem o "Pagamento Confirmado!" deste pedido."""
+    from apps.whatsapp.models import Message
+    return Message.objects.filter(
+        direction='outbound',
+        metadata__source='payment_confirmation',
+        metadata__order_id=str(order.id),
+    ).exists()
 
 
 @method_decorator(csrf_exempt, name='dispatch')
