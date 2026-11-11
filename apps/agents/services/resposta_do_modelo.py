@@ -38,6 +38,37 @@ _RACIOCINIO = re.compile(
 )
 
 
+#: 11/nov/2026: o `nemotron-3-ultra` na NIM passou a devolver sopa de tokens
+#: ("那些Re)))))))…", "0 星-0--") e cinco saíram para clientes num dia.
+#: Escrita que nunca aparece numa conversa em português: CJK, kana, hangul,
+#: devanágari, pontuação ideográfica e o caractere de substituição (byte
+#: quebrado).
+_ESCRITA_ESTRANHA = re.compile(
+    r'[ऀ-ॿ　-〿぀-ヿ㐀-䶿一-鿿'
+    r'가-힯！-／�]'
+)
+#: Parênteses empilhados: "))))" não existe em texto de gente.
+_PARENTESES_EMPILHADOS = re.compile(r'[()]{4,}')
+#: Chamada de ferramenta ou código que vazou cru em vez de virar resposta.
+_CODIGO_CRU = re.compile(
+    r'</?tool_call>|</?function|```'
+    r'|^\s*\{\s*"(name|function|tool|arguments|parameters)"\s*:',
+    re.IGNORECASE,
+)
+
+
+def texto_degenerado(texto: str) -> bool:
+    """True quando o texto claramente não é uma resposta para gente ler."""
+    t = (texto or '').strip()
+    if not t:
+        return False  # vazio é tratado por quem chama
+    return bool(
+        _ESCRITA_ESTRANHA.search(t)
+        or _PARENTESES_EMPILHADOS.search(t)
+        or _CODIGO_CRU.search(t)
+    )
+
+
 def texto_para_o_cliente(texto, finish_reason) -> str:
     """Devolve o texto limpo, ou levanta RespostaDoModeloInvalida."""
     bruto = texto if isinstance(texto, str) else str(texto or '')
@@ -54,4 +85,6 @@ def texto_para_o_cliente(texto, finish_reason) -> str:
 
     if _RACIOCINIO.search(limpo):
         raise RespostaDoModeloInvalida('raciocinio_no_texto', bruto)
+    if texto_degenerado(limpo):
+        raise RespostaDoModeloInvalida('texto_degenerado', bruto)
     return limpo

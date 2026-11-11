@@ -9,6 +9,11 @@ from ..models import Agent
 from .langchain_service import LangchainService
 
 from apps.agents.avisos import MENSAGEM_DE_ERRO_DO_LLM
+from apps.agents.services.resposta_do_modelo import (
+    RespostaDoModeloInvalida,
+    texto_degenerado,
+    texto_para_o_cliente,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,23 +71,41 @@ class LangGraphService:
                 history_messages = list(memory.messages[-self.agent.max_context_messages:])
             except Exception as exc:
                 logger.warning("[LANGGRAPH] Falha ao carregar memória: %s", exc)
+        # 11/nov/2026: lixo do modelo ficou gravado no Redis e voltava como
+        # contexto, puxando o turno seguinte para o mesmo lixo.
+        history_messages = [
+            m for m in history_messages
+            if not texto_degenerado(m.content if isinstance(m.content, str) else '')
+        ]
+
+        def _estado_inicial() -> dict:
+            return {
+                "messages": history_messages + [HM(content=message)],
+                "phone_number": phone_number or "",
+                "conversation_id": conversation_id or "",
+                "session_id": session_id,
+                "store": None,
+                "tools": [],
+                "customer_context": "",
+                "store_context": "",
+                "delivery_info": "",
+                "response": "",
+            }
 
         # ── Invoca o grafo ─────────────────────────────────────────────────
-        initial_state: dict = {
-            "messages": history_messages + [HM(content=message)],
-            "phone_number": phone_number or "",
-            "conversation_id": conversation_id or "",
-            "session_id": session_id,
-            "store": None,
-            "tools": [],
-            "customer_context": "",
-            "store_context": "",
-            "delivery_info": "",
-            "response": "",
-        }
-
         try:
-            final_state = self._get_graph().invoke(initial_state)
+            response_text = ""
+            for tentativa in (1, 2):
+                final_state = self._get_graph().invoke(_estado_inicial())
+                response_text = self._texto_aprovado(final_state.get("response", ""), start)
+                if response_text:
+                    break
+                # Refazer repetiria criar_pedido/gerar_pix: pedido em dobro é
+                # pior que cair no fallback.
+                if final_state.get("tool_call_count"):
+                    break
+                if tentativa == 1:
+                    logger.warning("[LANGGRAPH] Resposta vazia/inválida — refazendo uma vez")
         except Exception:
             logger.exception("[LANGGRAPH] Erro na execução do grafo")
             return {
@@ -95,8 +118,6 @@ class LangGraphService:
                 "tokens_used": 0,
                 "order_created": None,
             }
-
-        response_text = final_state.get("response", "")
 
         # ── Salva turno no Redis ───────────────────────────────────────────
         if memory and response_text:
@@ -116,6 +137,20 @@ class LangGraphService:
             "tokens_used": 0,
             "order_created": None,
         }
+
+    def _texto_aprovado(self, texto: str, start: float) -> str:
+        """O texto que pode ir ao cliente, ou '' se o modelo devolveu lixo.
+
+        Mesma trava do loop antigo (`texto_para_o_cliente`): até 11/nov este
+        caminho — o de produção — não passava por ela.
+        """
+        if not (texto or "").strip():
+            return ""
+        try:
+            return texto_para_o_cliente(texto, None)
+        except RespostaDoModeloInvalida as invalida:
+            self._lc._registrar_resposta_barrada(invalida, None, start)
+            return ""
 
     def get_conversation_history(self, session_id: str, limit: int = 50) -> list:
         return self._lc.get_conversation_history(session_id, limit)
