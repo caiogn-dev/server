@@ -850,6 +850,19 @@ class UnifiedService:
             )
             return None
 
+        # Outro robô respondendo o nosso em loop (05/11: 45 trocas em 12 min).
+        # Só texto digitado conta: clique em botão repete de propósito.
+        conversa = getattr(self, 'conversation', None)
+        if interactive_reply is None and location_data is None and conversa is not None:
+            from apps.automation.services.sem_repeticao import mensagem_em_eco
+            if mensagem_em_eco(conversa.id, message_text):
+                logger.warning(
+                    '[unified] mesma mensagem 3x em 10 min na conversa %s — '
+                    'parece outro robô; bot não responde',
+                    conversa.id,
+                )
+                return self._suppressed('eco_de_robo')
+
         import time as _time
         inicio = _time.monotonic()
         resposta = self._processar_mensagem(

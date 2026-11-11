@@ -40,3 +40,37 @@ def ja_mandou_agora(conversa_id, tipo: str) -> bool:
     """
     chave = f'nao_repetir:{conversa_id}:{tipo}'
     return not cache.add(chave, 1, timeout=JANELA_SEGUNDOS)
+
+
+# ── Eco de outro robô ────────────────────────────────────────────────────────
+#
+# 05/nov/2026: uma campanha da Cê Saladas foi para um número que é outro
+# assistente automático. Ele respondia "O assistente está disponível apenas
+# para lojas selecionadas", o nosso bot respondia, e os dois trocaram 45
+# mensagens cada em 12 minutos.
+#
+# Gente não manda a MESMA frase longa três vezes em dez minutos; robô manda.
+# Frase curta ("sim", "ok", "1") repete de verdade num checkout e nunca conta.
+
+#: A partir de quantas vezes a mesma mensagem é eco.
+REPETICOES_DE_ECO = 3
+#: Abaixo disso a mensagem é curta demais para concluir qualquer coisa.
+TAMANHO_MINIMO_DE_ECO = 12
+
+
+def mensagem_em_eco(conversa_id, texto: str) -> bool:
+    """True quando esta conversa recebe a mesma mensagem pela 3ª vez em 10 min."""
+    import hashlib
+
+    normalizado = ' '.join((texto or '').lower().split())
+    if len(normalizado) < TAMANHO_MINIMO_DE_ECO:
+        return False
+    digest = hashlib.sha1(normalizado.encode('utf-8')).hexdigest()[:16]
+    chave = f'eco:{conversa_id}:{digest}'
+    cache.add(chave, 0, timeout=JANELA_SEGUNDOS)
+    try:
+        vezes = cache.incr(chave)
+    except ValueError:  # a chave expirou entre o add e o incr
+        cache.add(chave, 1, timeout=JANELA_SEGUNDOS)
+        vezes = 1
+    return vezes >= REPETICOES_DE_ECO

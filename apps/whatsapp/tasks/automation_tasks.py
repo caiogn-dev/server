@@ -97,6 +97,20 @@ TEXTOS_DO_LEMBRETE_DE_SESSAO = {
     ),
 }
 
+#: Quando a etapa 2h/24h não tem template próprio e cai no `cart_abandoned`
+#: semeado, o cliente recebia o MESMO texto três vezes (09–10/nov). A primeira
+#: etapa usa o texto da loja; as seguintes, estas variações.
+TEXTOS_DO_LEMBRETE_DE_CARRINHO = {
+    '2h': (
+        "Oi, {nome}! 🛒 Seus itens ainda estão no carrinho.\n\n"
+        "Total: *R$ {total}*. Quer finalizar?"
+    ),
+    '24h': (
+        "Oi, {nome}! 🥗 Passando pra lembrar do seu carrinho de ontem "
+        "(R$ {total}).\n\nSe quiser, é só tocar em *Finalizar Pedido*."
+    ),
+}
+
 CART_TEMPLATES = {
     '30min': ('cart_reminder_30', 'cart_abandoned'),
     '2h': ('cart_reminder_2h', 'cart_abandoned'),
@@ -289,7 +303,9 @@ def send_cart_reminder(self, cart_id: str, reminder_type: str):
                 cart_metadata.get('customer_name')
                 or getattr(cart.user, 'name', '')
                 or getattr(cart.user, 'first_name', '')
-                or 'Cliente'
+                # "Oi Cliente!" (09/11): sem nome, o tratamento é "você",
+                # como nas campanhas.
+                or 'você'
             )
 
             if not customer_phone:
@@ -331,12 +347,20 @@ def send_cart_reminder(self, cart_id: str, reminder_type: str):
                 for item in cart.items.all()[:5]
             ])
 
-            message = template.render_message({
-                'customer_name': customer_name,
-                'cart_items': items_summary,
-                'cart_total': cart.subtotal,
-                'cart_item_count': cart.items.count(),
-            })
+            if (
+                template.event_type == 'cart_abandoned'
+                and reminder_type in TEXTOS_DO_LEMBRETE_DE_CARRINHO
+            ):
+                message = TEXTOS_DO_LEMBRETE_DE_CARRINHO[reminder_type].format(
+                    nome=customer_name, total=cart.subtotal,
+                )
+            else:
+                message = template.render_message({
+                    'customer_name': customer_name,
+                    'cart_items': items_summary,
+                    'cart_total': cart.subtotal,
+                    'cart_item_count': cart.items.count(),
+                })
 
             account = _get_account_for_profile(profile)
             if account:

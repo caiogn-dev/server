@@ -486,8 +486,13 @@ def agent_node(state: AgentState, *, agent, langchain_service) -> dict:
     tools = state.get("tools") or []
     llm = langchain_service.llm
 
+    # Na última volta o modelo PRECISA responder: com as ferramentas ligadas
+    # ele pedia uma 3ª, o roteador encerrava no limite e o cliente ficava sem
+    # resposta (11/nov, "Limite de iterações atingido" → resposta '').
+    no_limite = (state.get("tool_call_count") or 0) >= _MAX_TOOL_ITERATIONS
     use_tools = (
         bool(tools)
+        and not no_limite
         and agent.provider.lower() in _TOOL_CAPABLE_PROVIDERS
     )
     llm_bound = llm.bind_tools(tools) if use_tools else llm

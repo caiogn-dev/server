@@ -57,13 +57,24 @@ _CODIGO_CRU = re.compile(
 )
 
 
+def _letra_fora_do_portugues(t: str) -> bool:
+    """Português cabe inteiro no Latin-1 (até U+00FF).
+
+    No fluxo real o ultra devolveu 'ươ' (vietnamita, Latin Extended-B), que a
+    lista de escritas acima não pegava. Emoji não é letra e passa.
+    """
+    return any(c.isalpha() and ord(c) > 0xFF for c in t)
+
+
 def texto_degenerado(texto: str) -> bool:
     """True quando o texto claramente não é uma resposta para gente ler."""
     t = (texto or '').strip()
     if not t:
         return False  # vazio é tratado por quem chama
     return bool(
-        _ESCRITA_ESTRANHA.search(t)
+        not any(c.isalpha() for c in t)  # ')', '...': nenhuma palavra
+        or _ESCRITA_ESTRANHA.search(t)
+        or _letra_fora_do_portugues(t)
         or _PARENTESES_EMPILHADOS.search(t)
         or _CODIGO_CRU.search(t)
     )

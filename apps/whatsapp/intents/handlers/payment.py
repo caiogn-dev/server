@@ -64,6 +64,11 @@ class PaymentStatusHandler(IntentHandler):
                     "⏳ Estou gerando seu código PIX agora...\n\n"
                     "Por favor, aguarde alguns segundos e toque em *PIX* novamente. 🙏"
                 )
+            # Fernanda, CE-2611099564 (10/11): pedido com pagamento na entrega,
+            # em preparo, e ela quis pagar no PIX antes. Ouviu "Não encontrei
+            # pagamentos pendentes" quatro vezes.
+            if order_without_pix.status not in self._STATUS_SEM_COBRANCA:
+                return self._pix_do_pedido(order_without_pix, session_manager)
         # "Já paguei." de quem acabou de pagar recebia "Quer fazer um pedido
         # novo?" (Odaíse, CE-2610275997, 27/10). Pedido pago nas últimas 24h:
         # confirmar o pagamento.
@@ -81,6 +86,31 @@ class PaymentStatusHandler(IntentHandler):
                 f"📦 Status: {pago.get_status_display()}"
             )
         return HandlerResult.text("Não encontrei pagamentos pendentes. ✅\n\nQuer fazer um pedido novo?")
+
+    #: Pedido nesses estados não se cobra mais.
+    _STATUS_SEM_COBRANCA = frozenset({
+        Order.OrderStatus.CANCELLED, Order.OrderStatus.REFUNDED, Order.OrderStatus.FAILED,
+    })
+
+    def _pix_do_pedido(self, pedido, session_manager) -> HandlerResult:
+        """Gera (ou reaproveita) o PIX de um pedido aberto e manda o código."""
+        try:
+            from apps.stores.services.checkout_service import CheckoutService
+            resultado = CheckoutService.create_payment(pedido, payment_method='pix')
+        except Exception as exc:
+            logger.warning('[pagamento] PIX do pedido %s falhou: %s', pedido.order_number, exc)
+            resultado = None
+
+        codigo = (resultado or {}).get('pix_code') if (resultado or {}).get('success') else None
+        if not codigo:
+            return HandlerResult.text(
+                f"Seu pedido *#{pedido.order_number}* está aberto, mas não consegui "
+                "gerar o PIX agora. 😕\n\n"
+                "Você pode pagar na entrega (o entregador leva a maquininha) "
+                "ou me pedir o PIX de novo em instantes."
+            )
+        session_manager.set_payment_pending(pix_code=codigo, payment_id=str(pedido.id))
+        return HandlerResult.text(codigo)
 
     # ── Cartão e maquininha ────────────────────────────────────────────────
     #

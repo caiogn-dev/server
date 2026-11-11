@@ -94,3 +94,42 @@ class TestLembreteDeCarrinho:
             _rodar(conta, carrinho)
 
         assert envio.call_count == 2
+
+
+@pytest.mark.django_db
+class TestTresLembretesNaoSaoOMesmoTexto:
+    """09–10/nov: Maísa e outro cliente receberam o MESMO texto 3x (30 min, 2 h,
+    24 h) — só o `cart_abandoned` semeado existe, e as 3 etapas caíam nele."""
+
+    def _textos(self, conta, carrinho):
+        for etapa in ('30min', '2h', '24h'):
+            with patch(BOTOES, return_value={'messages': [{'id': f'wamid.carrinho-{etapa}'}]}):
+                _rodar(conta, carrinho, etapa)
+        return list(
+            Message.objects.filter(direction='outbound').values_list('text_body', flat=True)
+        )
+
+    def test_etapas_sem_template_proprio_mandam_textos_diferentes(self, conta, carrinho):
+        textos = self._textos(conta, carrinho)
+        assert len(set(textos)) == 3
+
+    def test_template_da_etapa_continua_valendo(self, conta, carrinho):
+        perfil = CompanyProfile.objects.get(store=carrinho.store)
+        AutoMessage.objects.create(
+            company=perfil, event_type='cart_reminder_2h', name='2h',
+            message_text='Lembrete 2h do dono', is_active=True,
+        )
+        with patch(BOTOES, return_value=OK):
+            _rodar(conta, carrinho, '2h')
+        assert Message.objects.filter(text_body='Lembrete 2h do dono').exists()
+
+
+@pytest.mark.django_db
+def test_sem_nome_nao_chama_de_cliente(conta, carrinho):
+    """"Oi Cliente!" — o fallback do nome era a palavra Cliente."""
+    carrinho.metadata = {'customer_phone': TEL}
+    carrinho.save(update_fields=['metadata'])
+    with patch(BOTOES, return_value=OK):
+        _rodar(conta, carrinho)
+    texto = Message.objects.get(direction='outbound').text_body
+    assert 'Cliente' not in texto

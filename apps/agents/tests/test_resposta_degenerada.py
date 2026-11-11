@@ -28,6 +28,10 @@ LIXO_REAL = [
     ".11Ref)IC)Gener))..Ch))�)�-Re)那些Re) (E Service),Re)0�...、1,、,,.,)Re)、Ré),),�Re)_interval)",
     '(ianss(r))�(�)))S)))2)22)) (2{(22))(()((((-(((.s)())).F))))))))))))))))))))))',
     'mui──\n\n Xôसिंह�underlineCharactersyyy.User��ctoj',
+    # Medidos no fluxo real do bot (11/nov 19:4x): passavam pela 1ª versão.
+    'ươ',
+    ')',
+    '...',
 ]
 
 CODIGO_CRU = [
@@ -125,3 +129,41 @@ def test_nao_refaz_quando_a_rodada_ja_chamou_ferramenta():
     assert out['response'] == ''
     assert grafo.invoke.call_count == 1
     memoria.add_ai_message.assert_not_called()
+
+
+# ── Limite de ferramentas: a última volta responde, não pede outra ferramenta ─
+
+def test_no_limite_de_ferramentas_o_modelo_responde_sem_ferramentas():
+    """11/nov: após 2 rodadas o modelo pedia uma 3ª ferramenta, o grafo
+    encerrava e a resposta saía vazia ("Limite de iterações atingido")."""
+    from apps.agents.graph import nodes
+
+    llm = MagicMock()
+    llm.invoke.return_value = AIMessage(content='Temos Caesar e Mediterrânea.')
+    lc = MagicMock(llm=llm)
+    agente = MagicMock(provider='nvidia')
+    estado = {
+        'messages': [AIMessage(content='oi')],
+        'tools': [MagicMock()],
+        'tool_call_count': nodes._MAX_TOOL_ITERATIONS,
+    }
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(nodes, '_build_system_prompt', lambda s, a: 'sistema')
+        out = nodes.agent_node(estado, agent=agente, langchain_service=lc)
+
+    llm.bind_tools.assert_not_called()
+    assert out['messages'][0].content == 'Temos Caesar e Mediterrânea.'
+
+
+def test_antes_do_limite_as_ferramentas_continuam_ligadas():
+    from apps.agents.graph import nodes
+
+    llm = MagicMock()
+    llm.bind_tools.return_value.invoke.return_value = AIMessage(content='ok')
+    lc = MagicMock(llm=llm)
+    estado = {'messages': [AIMessage(content='oi')], 'tools': [MagicMock()], 'tool_call_count': 0}
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(nodes, '_build_system_prompt', lambda s, a: 'sistema')
+        nodes.agent_node(estado, agent=MagicMock(provider='nvidia'), langchain_service=lc)
+
+    llm.bind_tools.assert_called_once()
