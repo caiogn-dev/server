@@ -96,7 +96,9 @@ class DeliveryQuoteService:
                 'distance_km': float(distance),
                 'calculation': 'out_of_range',
                 'reason': 'out_of_range',
-                'message': 'Distância acima de 16 km — entrar em contato para combinar frete',
+                # O raio é o DA LOJA: "acima de 16 km" fixo mentia para quem
+                # entrega só até 5 km (13/11).
+                'message': f'Distância acima de {max_km.normalize():f} km — entrar em contato para combinar frete'.replace('.', ','),
             }, store, subtotal)
 
         # Segundo degrau (opcional): acima de `delivery_far_km` o quilômetro

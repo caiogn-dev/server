@@ -101,6 +101,14 @@ class TestOQueNaoPodeMudar:
         assert r['is_valid'] is False
         assert r['available'] is False
 
+    def test_mensagem_de_fora_da_area_diz_o_raio_da_loja(self, loja):
+        """Loja de R$ 5 até 5 km não pode dizer "acima de 16 km" ao cliente."""
+        loja.metadata = {**loja.metadata, 'delivery_max_km': '5.0'}
+        loja.save(update_fields=['metadata'])
+        r = DeliveryQuoteService.calculate_dynamic_fee(loja, Decimal('6'))
+        assert '5 km' in r['message']
+        assert '16' not in r['message']
+
     def test_teto_de_taxa_limita_o_trecho_caro(self, loja):
         loja.metadata = {**loja.metadata, 'delivery_max_fee': '20.00'}
         loja.save(update_fields=['metadata'])
