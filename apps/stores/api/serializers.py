@@ -2318,7 +2318,9 @@ def build_combo_groups(obj, somente_disponiveis=False):
                 'stock': (p.stock_quantity if p_tracks else None),
                 'max_selections': opt.max_selections,
                 'image_url': p_img,
-                'description': _descricao_curta_da_opcao(p),
+                # Com preço próprio no combo, quantidade e preço vêm do grupo:
+                # a descrição de venda do avulso ("Embalagem com 50 un") mente.
+                'description': '' if opt.price_override is not None else _descricao_curta_da_opcao(p),
                 # Grupo cadastrado sem título vira "Bebidas"/"Sobremesas" na
                 # vitrine pela categoria comum das opções (07/10: o modal
                 # mostrava ": selecione pelo menos 1 item" três vezes).

@@ -46,3 +46,34 @@ class DescricaoDaOpcaoDoComboTest(TestCase):
         self.produto.description = ''
         self.produto.save(update_fields=['short_description', 'description'])
         assert self._descricao() == ''
+
+
+class OpcaoComPrecoProprioNoComboTest(TestCase):
+    """Opção com preço próprio no combo NÃO repete a descrição do avulso.
+
+    Ivoneth (15/11): o combo leva 15 mini sanduíches (override R$ 58,50), mas a
+    linha da opção dizia "Embalagem com 50 unidades (R$ 5,00/un)" — o texto do
+    produto avulso. Quantidade e preço do combo vêm do grupo e do override;
+    a descrição de venda do avulso contradiz os dois.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.store, cls.combo = make_combo_with_groups(groups=1, variants=0, options=1)
+        cls.opcao = cls.combo.groups.get().product_options.get()
+        cls.produto = cls.opcao.product
+        cls.produto.short_description = 'Embalagem com 50 unidades (R$ 5,00/un).'
+        cls.produto.save(update_fields=['short_description'])
+
+    def _descricao(self):
+        return build_combo_groups(self.combo)[0]['product_options'][0]['description']
+
+    def test_com_preco_proprio_nao_mostra_descricao_do_avulso(self):
+        self.opcao.price_override = '58.50'
+        self.opcao.save(update_fields=['price_override'])
+        assert self._descricao() == ''
+
+    def test_sem_preco_proprio_mantem_a_descricao(self):
+        self.opcao.price_override = None
+        self.opcao.save(update_fields=['price_override'])
+        assert self._descricao() == 'Embalagem com 50 unidades (R$ 5,00/un).'
