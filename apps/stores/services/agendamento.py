@@ -7,7 +7,8 @@ servidor: os turnos de cada dia (`horario_de_funcionamento`), a pausa
 programada e o que o dono configurou em `metadata.agendamento`:
 
     {'intervalo': 60,     # tamanho da faixa em minutos (30, 60, 90 ou 120)
-     'antecedencia': 60}  # hoje, a faixa só começa depois de agora + isto
+     'antecedencia': 60,  # hoje, a faixa só começa depois de agora + isto
+     'dias_de_antecedencia': 0}  # encomenda: 1º dia aceito = hoje + N, e agendar é obrigatório
 
 A vitrine recebe a agenda pronta no `/availability/`; o checkout recusa faixa
 fora do horário; o bot oferece os mesmos horários.
@@ -21,7 +22,8 @@ from django.utils import timezone
 from apps.stores.services.horario_de_funcionamento import dia_esta_aberto, turnos_do_dia
 
 INTERVALOS = (30, 60, 90, 120)
-PADRAO = {'intervalo': 60, 'antecedencia': 60, 'dias': 7}
+PADRAO = {'intervalo': 60, 'antecedencia': 60, 'dias': 7, 'dias_de_antecedencia': 0}
+MAX_DIAS_DE_ANTECEDENCIA = 30
 DIAS_DA_SEMANA = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
 
 
@@ -34,7 +36,21 @@ def config_do_agendamento(store) -> dict:
     antecedencia = bruto.get('antecedencia')
     if isinstance(antecedencia, int) and not isinstance(antecedencia, bool) and 0 <= antecedencia <= 24 * 60:
         cfg['antecedencia'] = antecedencia
+    dias = bruto.get('dias_de_antecedencia')
+    if isinstance(dias, int) and not isinstance(dias, bool) and 0 <= dias <= MAX_DIAS_DE_ANTECEDENCIA:
+        cfg['dias_de_antecedencia'] = dias
     return cfg
+
+
+def primeiro_dia_aceito(store, agora: datetime) -> date:
+    return timezone.localtime(agora).date() + timedelta(days=config_do_agendamento(store)['dias_de_antecedencia'])
+
+
+def _frase_da_antecedencia(store, agora: datetime) -> str:
+    n = config_do_agendamento(store)['dias_de_antecedencia']
+    dia = primeiro_dia_aceito(store, agora)
+    return (f'Pedidos com no mínimo {n} dia{"s" if n > 1 else ""} de antecedência. '
+            f'Escolha uma data a partir de {dia.strftime("%d/%m")}.')
 
 
 def _minutos(hhmm) -> int | None:
@@ -94,7 +110,7 @@ def faixas_do_dia(store, dia: date, agora: datetime) -> list[str]:
     """
     cfg = config_do_agendamento(store)
     agora = timezone.localtime(agora)
-    if dia < agora.date():
+    if dia < agora.date() or dia < primeiro_dia_aceito(store, agora):
         return []
     corte = agora.hour * 60 + agora.minute + cfg['antecedencia'] if dia == agora.date() else -1
     pausas = _pausas_do_dia(store, dia)
@@ -132,6 +148,8 @@ def problema_da_faixa(store, dia: date, faixa: str, agora: datetime) -> str | No
     antes de o dono mudar de 1 h para 30 min ainda manda "12:00-14:00", e isso
     está dentro do horário. O que não passa é horário em que ninguém atende.
     """
+    if dia < primeiro_dia_aceito(store, agora):
+        return _frase_da_antecedencia(store, agora)
     if not (getattr(store, 'operating_hours', None) or {}):
         return None  # loja sem horário cadastrado: não há contra o que conferir
     partes = str(faixa or '').replace(' ', '').split('-')
@@ -145,3 +163,12 @@ def problema_da_faixa(store, dia: date, faixa: str, agora: datetime) -> str | No
     if dia == local.date() and inicio < local.hour * 60 + local.minute:
         return 'Esse horário já passou. Escolha outro horário para o agendamento.'
     return None
+
+
+def problema_do_agendamento(store, dia: date | None, faixa: str, agora: datetime) -> str | None:
+    """Checkout: encomenda sem data é recusada; com data, vale `problema_da_faixa`."""
+    if not (dia and faixa):
+        if config_do_agendamento(store)['dias_de_antecedencia'] > 0:
+            return _frase_da_antecedencia(store, agora)
+        return None
+    return problema_da_faixa(store, dia, faixa, agora)

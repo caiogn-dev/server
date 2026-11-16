@@ -12,7 +12,9 @@ import pytest
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from apps.stores.services.agendamento import agenda, config_do_agendamento, faixas_do_dia, problema_da_faixa
+from apps.stores.services.agendamento import (
+    agenda, config_do_agendamento, faixas_do_dia, problema_da_faixa, problema_do_agendamento,
+)
 from apps.stores.tests.factories import make_store
 
 pytestmark = pytest.mark.django_db
@@ -90,7 +92,7 @@ class TestFaixas:
 
     def test_config_invalida_cai_no_padrao(self, loja):
         _config(loja, intervalo=7, antecedencia=-5)
-        assert config_do_agendamento(loja) == {'intervalo': 60, 'antecedencia': 60, 'dias': 7}
+        assert config_do_agendamento(loja) == {'intervalo': 60, 'antecedencia': 60, 'dias': 7, 'dias_de_antecedencia': 0}
 
 
 class TestValidacao:
@@ -117,3 +119,43 @@ def test_availability_leva_a_agenda(loja):
     assert r.status_code == 200
     assert r.data['agendamento']['intervalo'] == 60
     assert all(f.count('-') == 1 for d in r.data['agendamento']['dias'] for f in d['faixas'])
+
+
+class TestEncomendaComAntecedencia:
+    """Ivoneth (16/11): pedido com no mínimo 1 dia de antecedência.
+
+    `dias_de_antecedencia` = N: o primeiro dia aceito é hoje + N, e o pedido
+    tem de vir agendado (não existe "entregar agora" numa encomenda).
+    """
+    agora = _agora('2026-10-21T09:00')  # quarta
+
+    def test_hoje_some_da_agenda(self, loja):
+        _config(loja, dias_de_antecedencia=1)
+        assert faixas_do_dia(loja, QUARTA, self.agora) == []
+        assert agenda(loja, self.agora)[0]['data'] == '2026-10-22'
+
+    def test_amanha_inteiro_vale(self, loja):
+        _config(loja, dias_de_antecedencia=1)
+        assert faixas_do_dia(loja, date(2026, 10, 22), self.agora)[0] == '08:00-09:00'
+
+    def test_checkout_recusa_hoje(self, loja):
+        _config(loja, dias_de_antecedencia=1)
+        problema = problema_da_faixa(loja, QUARTA, '15:00-16:00', self.agora)
+        assert problema and 'antecedência' in problema
+
+    def test_checkout_exige_agendamento(self, loja):
+        _config(loja, dias_de_antecedencia=1)
+        problema = problema_do_agendamento(loja, None, '', self.agora)
+        assert problema and 'antecedência' in problema
+
+    def test_sem_antecedencia_nao_exige(self, loja):
+        assert problema_do_agendamento(loja, None, '', self.agora) is None
+
+    def test_valor_invalido_vira_zero(self, loja):
+        _config(loja, dias_de_antecedencia='muitos')
+        assert config_do_agendamento(loja)['dias_de_antecedencia'] == 0
+
+    def test_availability_conta_a_antecedencia(self, loja):
+        _config(loja, dias_de_antecedencia=1)
+        r = APIClient().get(f'/api/v1/public/{loja.slug}/availability/')
+        assert r.data['agendamento']['dias_de_antecedencia'] == 1

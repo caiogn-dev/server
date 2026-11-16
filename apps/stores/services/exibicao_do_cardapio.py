@@ -26,6 +26,8 @@ PADRAO = {
     # Topo do cardápio: formato e alinhamento do logo ('padrao' = do template).
     'logo_formato': 'padrao',
     'logo_alinhamento': 'padrao',
+    # Linha fixa no modal de TODO produto (Ivoneth: "vai em embalagem descartável").
+    'aviso_do_produto': '',
 }
 
 ESCOLHAS = {
@@ -36,7 +38,7 @@ ESCOLHAS = {
     'logo_alinhamento': ('padrao', 'esquerda', 'centro'),
 }
 LIMITE_DESCRICAO_MAX = 500
-TEXTOS_MAX = {'agradecimento_titulo': 60, 'agradecimento_subtitulo': 160}
+TEXTOS_MAX = {'agradecimento_titulo': 60, 'agradecimento_subtitulo': 160, 'aviso_do_produto': 120}
 BOOLEANOS = ('mostrar_estoque_baixo', 'mostrar_esgotados', 'mostrar_peca_novamente')
 
 

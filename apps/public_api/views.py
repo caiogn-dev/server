@@ -240,6 +240,8 @@ def public_store_availability(request, slug):
         # Faixas de agendamento prontas: a vitrine só desenha (21/10).
         'agendamento': {
             'intervalo': config_do_agendamento(store)['intervalo'],
+            # >0 = encomenda: a vitrine obriga a agendar e avisa no produto.
+            'dias_de_antecedencia': config_do_agendamento(store)['dias_de_antecedencia'],
             'dias': agenda(store, now),
         },
     })

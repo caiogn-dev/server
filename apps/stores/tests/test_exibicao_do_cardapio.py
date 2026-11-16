@@ -93,3 +93,18 @@ def test_vitrine_recebe_no_app_config(api, loja):
     assert exib['mostrar_esgotados'] is False
     assert exib['agradecimento_titulo'] == 'Valeu!'
     assert exib['foto_encaixe'] == PADRAO['foto_encaixe']
+
+
+@pytest.mark.django_db
+def test_aviso_do_produto_chega_na_vitrine(api, loja):
+    """Ivoneth (16/11): "vai em embalagem descartável" em todo produto."""
+    r = api.patch(f'{URL}?store={loja.slug}', {'aviso_do_produto': 'Enviado em embalagem descartável.'}, format='json')
+    assert r.status_code == 200, r.content
+    exib = APIClient().get(f'/api/v1/stores/{loja.slug}/app-config/').json()['exibicao']
+    assert exib['aviso_do_produto'] == 'Enviado em embalagem descartável.'
+
+
+@pytest.mark.django_db
+def test_aviso_do_produto_longo_e_recusado(api, loja):
+    r = api.patch(f'{URL}?store={loja.slug}', {'aviso_do_produto': 'x' * 200}, format='json')
+    assert r.status_code == 400
