@@ -38,6 +38,16 @@ class StoreCombo(models.Model):
     # Config livre por combo (ex.: loyalty_units — quantos selos de fidelidade
     # o combo vale por unidade; mesma convenção do StoreProduct.attributes).
     metadata = models.JSONField(default=dict, blank=True)
+    # Categoria opcional: o combo aparece DENTRO dela no cardápio (Ivoneth:
+    # "Monte seu Coffee Break" mora em Coffee Break). Sem categoria, fica na
+    # seção "Combos". Apagar a categoria devolve o combo para lá.
+    category = models.ForeignKey(
+        'stores.StoreCategory',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='combos',
+    )
     # Combo também vai pra etiqueta e pro leitor do balcão: sem código, o
     # operador precisa achar o combo na busca manual enquanto a fila anda.
     # Mesmo campo e mesma convenção do StoreProduct.barcode.

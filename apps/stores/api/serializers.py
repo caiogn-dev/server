@@ -2380,11 +2380,24 @@ class StoreComboSerializer(serializers.ModelSerializer):
             # `metadata` guarda loyalty_units e `inclui` (o brinde fixo que o
             # agente de WhatsApp lê). Sem ele nos fields, o painel não tinha
             # como cadastrar e o dado só entrava por shell.
-            'metadata',
+            'metadata', 'category',
             'groups', 'catalog_role', 'merchandising_flags',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def validate_category(self, categoria):
+        if categoria is None:
+            return None
+        store = self.instance.store if self.instance else None
+        if store is None:
+            store_id = self.initial_data.get('store') if hasattr(self, 'initial_data') else None
+            if store_id and str(categoria.store_id) != str(store_id):
+                raise serializers.ValidationError('Categoria de outra loja.')
+            return categoria
+        if categoria.store_id != store.id:
+            raise serializers.ValidationError('Categoria de outra loja.')
+        return categoria
 
     def validate(self, data):
         from apps.stores.services.preco_zero import checar_preco_zero
@@ -2909,7 +2922,8 @@ class PublicComboSerializer(serializers.ModelSerializer):
     savings = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     savings_percentage = serializers.IntegerField(read_only=True)
     is_in_stock = serializers.SerializerMethodField()
-    
+    category = serializers.SerializerMethodField()
+
     class Meta:
         model = StoreCombo
         fields = [
@@ -2918,6 +2932,7 @@ class PublicComboSerializer(serializers.ModelSerializer):
             'image_url',
             'is_active', 'featured',
             'stock_quantity', 'is_in_stock', 'dynamic_pricing',
+            'category',
             'groups'
         ]
     
@@ -2932,6 +2947,10 @@ class PublicComboSerializer(serializers.ModelSerializer):
         if not obj.track_stock:
             return True
         return obj.stock_quantity > 0
+
+    def get_category(self, obj):
+        # Mesmo formato do `category` do produto: o cardápio compara os dois.
+        return str(obj.category_id) if obj.category_id else None
 
 
 class PublicCatalogSerializer(serializers.Serializer):
