@@ -143,7 +143,7 @@ class FlowSessionViewSet(viewsets.ReadOnlyModelViewSet):
 class FlowExecutionLogViewSet(viewsets.ReadOnlyModelViewSet):
     """ViewSet for FlowExecutionLog - read only for analytics."""
     
-    queryset = FlowExecutionLog.objects.select_related('session', 'flow')
+    queryset = FlowExecutionLog.objects.select_related('session', 'session__conversation', 'flow')
     serializer_class = FlowExecutionLogSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = StandardResultsSetPagination
