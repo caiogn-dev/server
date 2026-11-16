@@ -2923,6 +2923,7 @@ class PublicComboSerializer(serializers.ModelSerializer):
     savings_percentage = serializers.IntegerField(read_only=True)
     is_in_stock = serializers.SerializerMethodField()
     category = serializers.SerializerMethodField()
+    passo_a_passo = serializers.SerializerMethodField()
 
     class Meta:
         model = StoreCombo
@@ -2932,7 +2933,7 @@ class PublicComboSerializer(serializers.ModelSerializer):
             'image_url',
             'is_active', 'featured',
             'stock_quantity', 'is_in_stock', 'dynamic_pricing',
-            'category',
+            'category', 'passo_a_passo',
             'groups'
         ]
     
@@ -2947,6 +2948,10 @@ class PublicComboSerializer(serializers.ModelSerializer):
         if not obj.track_stock:
             return True
         return obj.stock_quantity > 0
+
+    def get_passo_a_passo(self, obj):
+        # Montador em passos (um grupo por tela), ligado combo a combo.
+        return bool((obj.metadata or {}).get('passo_a_passo'))
 
     def get_category(self, obj):
         # Mesmo formato do `category` do produto: o cardápio compara os dois.

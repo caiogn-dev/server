@@ -48,3 +48,20 @@ class ComboNaCategoriaTest(TestCase):
         self.categoria.delete()
         self.combo.refresh_from_db()
         assert self.combo.category_id is None
+
+
+class ComboPassoAPassoTest(TestCase):
+    """Montador em passos (Ivoneth 16/11) é escolha do combo, não regra geral:
+    o Combo Família da Pastita segue na lista de sempre."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.store, cls.combo = make_combo_with_groups(groups=1, variants=0, options=1)
+
+    def test_padrao_e_lista(self):
+        assert PublicComboSerializer(self.combo).data['passo_a_passo'] is False
+
+    def test_ligado_no_metadata(self):
+        self.combo.metadata = {**(self.combo.metadata or {}), 'passo_a_passo': True}
+        self.combo.save(update_fields=['metadata'])
+        assert PublicComboSerializer(self.combo).data['passo_a_passo'] is True
