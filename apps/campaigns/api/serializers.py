@@ -48,6 +48,14 @@ class CampaignSerializer(serializers.ModelSerializer):
             'messages_read', 'messages_failed', 'created_at', 'updated_at',
         ]
 
+    def validate_template(self, template):
+        """`template` é FK gravável com queryset global: só vale template da
+        mesma conta da campanha (o create já exige isso no service)."""
+        if template is not None and self.instance is not None \
+                and template.account_id != self.instance.account_id:
+            raise serializers.ValidationError('Template não encontrado.')
+        return template
+
 
 class CampaignCreateSerializer(serializers.Serializer):
     """Serializer for creating campaigns."""

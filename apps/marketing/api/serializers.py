@@ -71,6 +71,14 @@ class EmailCampaignSerializer(serializers.ModelSerializer):
         """Loja de outro dono responde "não encontrada" — a trava é única,
         em `apps.core.serializers`."""
         return checar_loja_do_usuario(self.context.get('request'), value)
+
+    def validate_template(self, value):
+        """Template de loja alheia responde "não encontrado": senão a campanha
+        envia o HTML do vizinho e `template_name` o revela."""
+        if value is not None:
+            checar_loja_do_usuario(self.context.get('request'), value.store)
+        return value
+
     def validate(self, data):
         """Validate that either template or html_content is provided."""
         template = data.get('template')
@@ -201,6 +209,15 @@ class EmailAutomationSerializer(serializers.ModelSerializer):
         """Loja de outro dono responde "não encontrada" — a trava é única,
         em `apps.core.serializers`."""
         return checar_loja_do_usuario(self.context.get('request'), value)
+
+    def validate_template(self, value):
+        """Template de loja alheia responde "não encontrado": senão a campanha
+        envia o HTML do vizinho e `template_name` o revela."""
+        if value is not None:
+            checar_loja_do_usuario(self.context.get('request'), value.store)
+        return value
+
+
 class EmailAutomationListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for automation lists."""
     

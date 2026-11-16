@@ -1,6 +1,8 @@
 """Campanha de comentário no painel do lojista."""
 from collections import Counter
 
+from django.db.models import Count, Q
+
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -42,6 +44,9 @@ class CampanhaDeComentarioSerializer(serializers.ModelSerializer):
         read_only_fields = ['created_at']
 
     def get_participando(self, obj):
+        anotado = getattr(obj, 'participando_count', None)
+        if anotado is not None:
+            return anotado
         return obj.participacoes.filter(aceita=True).count()
 
     def get_no_ar(self, obj):
@@ -64,6 +69,9 @@ class CampanhaDeComentarioViewSet(viewsets.ModelViewSet):
         return (
             self.queryset.filter(account__user=self.request.user)
             .select_related('account')
+            .annotate(participando_count=Count(
+                'participacoes', filter=Q(participacoes__aceita=True),
+            ))
         )
 
     @action(detail=True, methods=['get'])

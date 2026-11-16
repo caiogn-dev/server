@@ -110,8 +110,29 @@ class MessengerConversationSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
+    def get_fields(self):
+        fields = super().get_fields()
+        # `account` só aceita páginas do próprio usuário: sem isto, qualquer
+        # autenticado criava/movia conversas para a conta de outro tenant.
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if "account" in fields and not fields["account"].read_only:
+            if user is not None and user.is_authenticated:
+                fields["account"].queryset = MessengerAccount.objects.filter(user=user)
+            else:
+                fields["account"].queryset = MessengerAccount.objects.none()
+        return fields
+
+    @staticmethod
+    def _last_msg(obj):
+        """Última mensagem; usa o prefetch quando a view o fez, senão 1 query."""
+        prefetched = getattr(obj, "ultima_mensagem", None)
+        if prefetched is not None:
+            return prefetched[0] if prefetched else None
+        return obj.messages.order_by("-created_at").first()
+
     def get_last_message(self, obj):
-        last_msg = obj.messages.order_by("-created_at").first()
+        last_msg = self._last_msg(obj)
         if not last_msg:
             return None
         return {
@@ -121,7 +142,7 @@ class MessengerConversationSerializer(serializers.ModelSerializer):
         }
 
     def get_last_message_preview(self, obj):
-        last_msg = obj.messages.order_by("-created_at").first()
+        last_msg = self._last_msg(obj)
         if not last_msg:
             return ""
         if last_msg.content:

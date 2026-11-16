@@ -17,7 +17,7 @@ class PostadoPackListSerializer(serializers.ModelSerializer):
     total_posts = serializers.SerializerMethodField()
 
     def get_total_posts(self, obj):
-        return obj.posts.count()
+        return len(obj.posts.all())
 
     class Meta:
         model = PostadoPack
@@ -33,7 +33,7 @@ class PostadoPackAdminSerializer(serializers.ModelSerializer):
     total_posts = serializers.SerializerMethodField()
 
     def get_total_posts(self, obj):
-        return obj.posts.count()
+        return len(obj.posts.all())
 
     class Meta:
         model = PostadoPack
@@ -49,11 +49,12 @@ class PostadoClientListSerializer(serializers.ModelSerializer):
     latest_pack_status = serializers.SerializerMethodField()
 
     def get_pack_count(self, obj):
-        return obj.packs.count()
+        return len(obj.packs.all())
 
     def get_latest_pack_status(self, obj):
-        latest = obj.packs.first()
-        return latest.status if latest else None
+        # Pack.Meta.ordering = ['-created_at']: o primeiro do prefetch é o mais recente.
+        packs = obj.packs.all()
+        return packs[0].status if packs else None
 
     class Meta:
         model = PostadoClient
@@ -68,7 +69,7 @@ class PostadoClientAdminSerializer(serializers.ModelSerializer):
     pack_count = serializers.SerializerMethodField()
 
     def get_pack_count(self, obj):
-        return obj.packs.count()
+        return len(obj.packs.all())
 
     class Meta:
         model = PostadoClient

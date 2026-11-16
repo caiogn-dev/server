@@ -156,6 +156,15 @@ class ProductNutritionProfileSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Produto não encontrado.")
         return product
 
+    def validate_recipe(self, recipe):
+        """`recipe` é FK gravável: só vale receita de loja acessível (IDOR de leitura da ficha)."""
+        from apps.core.permissions import user_can_access_store
+        if recipe is not None and not user_can_access_store(
+            self.context["request"].user, recipe.product.store
+        ):
+            raise serializers.ValidationError("Receita não encontrada.")
+        return recipe
+
     def get_calculation(self, obj):
         return _calculo(obj.recipe) if obj.recipe_id else None
 
