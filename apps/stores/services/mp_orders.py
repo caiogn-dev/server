@@ -62,12 +62,27 @@ def _soma_dos_itens(items):
     ).quantize(Decimal('0.01'))
 
 
+def _external_code(it):
+    """Código do item para a Orders API: NUNCA vazio, no máximo 30 chars.
+
+    O MP recusa a order INTEIRA (PIX e cartão) com 400 property_value se o
+    external_code vier vazio ou passar de 30 chars. Combo do PDV não tem
+    product nem sku (CE-2611176730, 17/nov) — cai no id do próprio item.
+    """
+    sku = str(getattr(it, 'sku', '') or '').strip()[:30]
+    if sku:
+        return sku
+    for cand in (getattr(it, 'product_id', None), getattr(it, 'id', None)):
+        code = str(cand or '').replace('-', '')[:30]
+        if code:
+            return code
+    return 'item'
+
+
 def build_items(order, total=None):
     items = []
     for it in order.items.all():
-        # MP limita external_code a 30 chars — UUID de product_id tem 36 e
-        # derruba a order inteira (400 property_value).
-        external_code = (it.sku or str(getattr(it, 'product_id', '') or ''))[:30]
+        external_code = _external_code(it)
         items.append({
             'title': (it.product_name or 'Item')[:256],
             'unit_price': str(it.unit_price),

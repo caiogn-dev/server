@@ -63,6 +63,19 @@ class MpOrdersTestCase(TestCase):
             if 'external_code' in it:
                 self.assertLessEqual(len(it['external_code']), 30, it)
 
+    def test_combo_sem_produto_nem_sku_tem_external_code(self):
+        """CE-2611176730 (17/nov): combo do PDV não tem product nem sku.
+        external_code ia vazio e a Orders API recusava o PIX inteiro com
+        400 `'$.items[0].external_code' - length must be >= 1`."""
+        StoreOrderItem.objects.create(
+            order=self.order, product_name='Combo: Queridinha + Especial',
+            sku='', unit_price=Decimal('59.90'), quantity=1,
+        )
+        for it in mp_orders.build_items(self.order):
+            if 'external_code' in it:
+                self.assertGreaterEqual(len(it['external_code']), 1, it)
+                self.assertLessEqual(len(it['external_code']), 30, it)
+
     def test_build_payer_completo(self):
         payer = mp_orders.build_payer(self.order, 'maria@x.com',
                                       {'identification_type': 'CPF', 'identification_number': '191.191.191-00'})

@@ -2046,33 +2046,10 @@ class CheckoutService:
 
             logger.error(f"Payment creation failed: {result}")
 
-            # PIX recusado NÃO quer dizer "não dá pra pagar". Em 19/08 o MP
-            # passou a devolver 403 PolicyAgent em POST /v1/payments (conta
-            # bloqueada, chaves revogadas) enquanto o Checkout Pro seguia
-            # criando cobrança normalmente. Sem este desvio o cliente via
-            # "pagamento falhou" sem nenhuma forma de pagar, e a venda morria
-            # com o pedido já criado no painel do lojista.
-            try:
-                fallback = CheckoutService.create_payment(
-                    order,
-                    payment_method='link',
-                    payment_data=payment_payload,
-                    amount=amount,
-                    store=target_store,
-                    description=description,
-                )
-            except Exception as exc:
-                logger.warning("Fallback PIX->link falhou: %s", exc)
-                fallback = None
-
-            if fallback and fallback.get('success'):
-                logger.info(
-                    "PIX recusado pelo MP; cobranca seguiu por link de pagamento (pedido %s)",
-                    order.order_number if order is not None else 'avulso',
-                )
-                fallback['pix_fallback'] = True
-                return fallback
-
+            # PIX recusado NÃO vira link de pagamento (removido em 17/nov a
+            # pedido do dono). O desvio de 19/08 era mudo: escondia todo PIX
+            # quebrado (sobrenome vazio 31/08, combo sem external_code 17/nov)
+            # mandando o checkout do MP no lugar do copia-e-cola.
             # Honesto sem ser destrutivo: `payment_status=FAILED` já impede o
             # pedido de fingir cobrança ativa. Mexer no `status` era o que
             # sumia com a venda da tela de quem está trabalhando — foi o susto
