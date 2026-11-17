@@ -250,6 +250,8 @@ class HandoverRequestViewSet(viewsets.ModelViewSet):
               conversation__account_id__in=account_ids) |
             Q(assigned_to=user) |
             Q(requested_by=user)
+        ).select_related(
+            'requested_by', 'approved_by', 'assigned_to',
         ).distinct()
     
     @action(detail=True, methods=['post'])
@@ -331,4 +333,4 @@ class HandoverLogViewSet(viewsets.ReadOnlyModelViewSet):
         account_ids = accessible_whatsapp_account_ids(user)
         return HandoverLog.objects.filter(
             conversation__account_id__in=account_ids
-        )
+        ).select_related('performed_by', 'assigned_to')
