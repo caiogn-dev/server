@@ -688,7 +688,9 @@ class EmailAutomationViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     def logs(self, request, pk=None):
         """Get logs for this automation."""
         automation = self.get_object()
-        logs = EmailAutomationLog.objects.filter(automation=automation)[:100]
+        logs = EmailAutomationLog.objects.filter(
+            automation=automation
+        ).select_related('automation')[:100]
         return Response(EmailAutomationLogSerializer(logs, many=True).data)
     
     @action(detail=False, methods=['post'])
