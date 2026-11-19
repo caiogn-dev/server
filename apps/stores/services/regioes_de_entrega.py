@@ -166,8 +166,9 @@ def coordenadas_do_payload(payload: dict) -> Tuple[Optional[float], Optional[flo
 def regiao_do_pedido(store, delivery_payload: dict) -> Optional[RegrasDaRegiao]:
     if (delivery_payload or {}).get('method') != 'delivery':
         return None
-    lat, lng, texto = coordenadas_do_payload(delivery_payload)
-    zona = zona_do_endereco(store, lat, lng, texto)
+    lat, lng, _texto = coordenadas_do_payload(delivery_payload)
+    # Só há zona com pino, e com pino o texto não escolhe zona (dono, 19/11).
+    zona = zona_do_endereco(store, lat, lng, '')
     if not zona or zona.get('surcharge_on_km'):
         return None
     return RegrasDaRegiao.da_zona(zona)

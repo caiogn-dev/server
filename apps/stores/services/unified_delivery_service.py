@@ -62,7 +62,9 @@ class UnifiedDeliveryService:
             }
 
         resultado = UnifiedDeliveryService._calcular_com_ponto(
-            store=store, delivery_method=delivery_method, address_text=address_text,
+            store=store, delivery_method=delivery_method,
+            # Com pino, o texto não escolhe zona: a zona é ONDE o pino está.
+            address_text=None if tinha_pino else address_text,
             lat=coords['lat'], lng=coords['lng'], rain_surcharge=rain_surcharge,
         )
         if not resultado.get('success'):
@@ -159,9 +161,7 @@ class UnifiedDeliveryService:
         # (16 km) recusava Paraíso/Porto a 60 km mesmo com a zona configurada,
         # e a zona era casada por `enabled`/`max_km`, ignorando as palavras.
         from apps.stores.services import regioes_de_entrega as regioes
-        zona = regioes.zona_do_endereco(
-            store, coords['lat'], coords['lng'], address_text or coords.get('formatted_address', ''),
-        )
+        zona = regioes.zona_do_endereco(store, coords['lat'], coords['lng'], address_text or '')
         if zona and not zona.get('surcharge_on_km'):
             regras = regioes.RegrasDaRegiao.da_zona(zona)
             fee = regras.taxa + (Decimal('2.00') if rain_surcharge else Decimal('0'))

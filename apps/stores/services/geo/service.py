@@ -852,8 +852,10 @@ class GeoService:
         # ── 1-3. Zonas fixas / condomínios (metadado fixed_price_zones) ──────
         fixed_zone = None
         if customer_location_known:
+            # Com pino, a zona é ONDE o pino está — o texto digitado não escolhe
+            # zona (dono, 19/11: "Aureny" escrito no Plano Diretor dava R$ 40).
             fixed_zone = self._match_fixed_price_zone(
-                store, float(customer_lat), float(customer_lng), address_text=address_text
+                store, float(customer_lat), float(customer_lng), address_text=''
             )
         if fixed_zone:
             return self._fixed_zone_response(

@@ -456,17 +456,22 @@ class CheckoutService:
         return DeliveryQuoteService.normalize(info, route)
 
     @staticmethod
-    def _pino_confirmado_pelo_reverso(lat, lng, endereco) -> bool:
-        """O reverso do pin dá a rua e o número escritos, ou a mesma quadra
-        de Palmas (Bárbara, 19/10)? Então o pin vale."""
-        from apps.stores.services.coerencia_do_ponto import pino_esta_no_endereco, pino_na_quadra_escrita
-        from apps.stores.services.geo.service import GeoService
+    def _ponto(lat, lng):
+        """(lat, lng) em float se for um ponto de verdade no mapa; senão (None, None).
+
+        Texto, NaN, (0, 0) e coordenada fora do globo não são pino: contam como
+        "sem pino" e o frete sai do endereço escrito.
+        """
+        import math
         try:
-            reverso = GeoService().reverse_geocode(float(lat), float(lng))
-        except Exception as exc:
-            logger.warning("Coerência do ponto: reverso falhou (%s)", exc)
-            return False
-        return pino_esta_no_endereco(reverso, endereco) or pino_na_quadra_escrita(reverso, endereco)
+            la, ln = float(lat), float(lng)
+        except (TypeError, ValueError):
+            return None, None
+        if not (math.isfinite(la) and math.isfinite(ln)):
+            return None, None
+        if not (-90 <= la <= 90 and -180 <= ln <= 180) or (la == 0 and ln == 0):
+            return None, None
+        return la, ln
 
     @staticmethod
     def calculate_delivery_fee_for_payload(store: Store, delivery_payload: dict) -> dict:
@@ -500,61 +505,19 @@ class CheckoutService:
             ]
             address_text = ', '.join(str(p).strip() for p in parts if str(p or '').strip()) or None
 
-        lat, lng = payload.get('lat'), payload.get('lng')
-        if (lat is None or lng is None) and isinstance(address_obj, dict):
-            # O bot grava o pin DENTRO do endereço (order_service._build_delivery_address).
-            lat = next((address_obj[k] for k in ('lat', 'latitude')
-                        if address_obj.get(k) not in ('', None)), None)
-            lng = next((address_obj[k] for k in ('lng', 'longitude')
-                        if address_obj.get(k) not in ('', None)), None)
-            if lat is None or lng is None:
-                lat = lng = None
-
-        # O pin não pode contradizer o endereço escrito. Em 20/08 dois pedidos
-        # saíram com o texto certo e a coordenada a 4,45 km e 5,16 km — o
-        # entregador segue o pin, e o frete é calculado por ele. A coordenada
-        # velha entra quando a pessoa mexe no mapa, não consegue finalizar e
-        # digita na mão; e uma vez gravada no endereço salvo, repete em todo
-        # pedido seguinte (a Barbara errou igual em 14/08 e 20/08, com a mesma
-        # coordenada). A checagem vive aqui porque este é o único ponto por
-        # onde TODOS os caminhos do front passam.
-        if lat is not None and lng is not None and address_text:
-            from apps.stores.services.coerencia_do_ponto import (
-                geocode_e_preciso, ponto_confere_com_texto, texto_achou_o_lugar_escrito,
+        # O PINO É O ENDEREÇO DE ENTREGA (dono, 19/11 — Emmanuel, R$ 40 a 6,75 km).
+        # Não existe mais checagem do pino contra o texto: o Google erra o
+        # texto (pôs "ACSU SO 40, Plano Diretor Sul" em Taquaralto) e a trava
+        # jogava fora o pino certo. Pino velho com endereço novo se resolve no
+        # checkout — digitar rua/bairro apaga o pino — e não adivinhando aqui.
+        # O texto só calcula quando não há pino.
+        lat, lng = CheckoutService._ponto(payload.get('lat'), payload.get('lng'))
+        if lat is None and isinstance(address_obj, dict):
+            # O bot e o site gravam o pin DENTRO do endereço.
+            lat, lng = CheckoutService._ponto(
+                address_obj.get('lat', address_obj.get('latitude')),
+                address_obj.get('lng', address_obj.get('longitude')),
             )
-            try:
-                from apps.stores.services.geo.service import GeoService
-                geo = GeoService().geocode(address_text)
-                # Texto que o Google não achou volta como "centro de Palmas":
-                # isso não é prova contra o pin (caso Ana, 05/10).
-                if not geocode_e_preciso(geo):
-                    geo = None
-                # Homônimo em outro bairro (Lais, 27/10: a "outra FIETO") não
-                # é prova contra o pin.
-                elif not texto_achou_o_lugar_escrito(geo, address_obj or address_text):
-                    logger.info(
-                        "Coerência do ponto: '%s' caiu em %s, fora do que foi escrito — mantendo o pin",
-                        address_text, geo.get('neighborhood'),
-                    )
-                    geo = None
-                lat_txt = (geo or {}).get('lat')
-                lng_txt = (geo or {}).get('lng')
-            except Exception as exc:
-                logger.warning("Coerência do ponto: geocodificação falhou (%s) — mantendo o pin", exc)
-                lat_txt = lng_txt = None
-
-            if (
-                not ponto_confere_com_texto(lat, lng, lat_txt, lng_txt)
-                and not CheckoutService._pino_confirmado_pelo_reverso(lat, lng, address_obj)
-            ):
-                logger.warning(
-                    "PIN DESCARTADO: coordenada (%s, %s) não confere com '%s' "
-                    "(texto fica em %s, %s). Usando o endereço escrito.",
-                    lat, lng, address_text, lat_txt, lng_txt,
-                )
-                # O texto ganha: é o que a pessoa escreveu e o que ela lê na
-                # confirmação do pedido.
-                lat = lng = None
 
         logger.info(f"calculate_delivery_fee_for_payload: lat={lat}, lng={lng}, address_text={address_text}")
         result = UnifiedDeliveryService.calculate_delivery_fee(
