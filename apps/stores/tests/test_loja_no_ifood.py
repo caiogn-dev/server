@@ -85,6 +85,11 @@ class LeituraTest(Base):
         self.assertEqual(d['pausas'], [])
         self.assertEqual(d['horarios'], [])
 
+    def test_lista_lojas_que_aprovaram_o_app(self):
+        with self._api({('GET', '/merchant/v1.0/merchants'): [
+                {'id': M, 'name': 'Teste', 'corporateName': 'L DE SOUZA'}]}):
+            self.assertEqual(loja.lojas_do_app(), [{'id': M, 'nome': 'Teste', 'razao_social': 'L DE SOUZA'}])
+
     def test_loja_sem_id_recusa(self):
         StoreIfoodIntegration.objects.filter(store=self.store).update(merchant_id='')
         with self.assertRaises(loja.LojaNoIfoodErro):

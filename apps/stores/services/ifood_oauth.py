@@ -114,6 +114,11 @@ def esquecer_token(app: str):
     cache.delete(_chave_cache(app))
 
 
+#: 429/5xx: até 3 tentativas, esperando no máximo 5 s por vez (roda em task).
+TENTATIVAS = 3
+ESPERA_MAX_S = 5
+
+
 def api(app: str, metodo: str, caminho: str, corpo=None, cabecalhos=None, params=None, timeout=TIMEOUT):
     """Chamada autenticada. JSON da resposta, ou None sem corpo (202/204).
 
@@ -122,7 +127,10 @@ def api(app: str, metodo: str, caminho: str, corpo=None, cabecalhos=None, params
     import requests
     from requests import RequestException
 
-    for tentativa in (1, 2):
+    import time
+
+    renovou = False
+    for tentativa in range(1, TENTATIVAS + 1):
         headers = {'Authorization': f'Bearer {token(app)}', **(cabecalhos or {})}
         try:
             resposta = requests.request(
@@ -130,9 +138,16 @@ def api(app: str, metodo: str, caminho: str, corpo=None, cabecalhos=None, params
             )
         except RequestException as exc:
             raise IfoodRecusou(f'iFood fora do ar: {exc}') from exc
-        if resposta.status_code == 401 and tentativa == 1:
+        if resposta.status_code == 401 and not renovou:
+            renovou = True
             esquecer_token(app)
             continue
+        # 429 (respeita Retry-After) e 5xx: backoff exponencial curto.
+        if (resposta.status_code == 429 or resposta.status_code >= 500) and tentativa < TENTATIVAS:
+            espera = _espera(resposta, tentativa)
+            if espera is not None:
+                time.sleep(espera)
+                continue
         if resposta.status_code >= 400:
             raise IfoodRecusou(
                 f'{resposta.status_code}: {resposta.text[:300]}', resposta.status_code, resposta.text,
@@ -144,6 +159,16 @@ def api(app: str, metodo: str, caminho: str, corpo=None, cabecalhos=None, params
         except ValueError:
             return None
     return None  # pragma: no cover — o laço sempre retorna ou levanta
+
+
+def _espera(resposta, tentativa: int):
+    """Segundos até a próxima tentativa; None = não vale esperar (desiste já)."""
+    try:
+        pedido = float(resposta.headers.get('Retry-After') or 0)
+    except (TypeError, ValueError):
+        pedido = 0
+    espera = pedido or (0.5 * 2 ** (tentativa - 1))
+    return espera if espera <= ESPERA_MAX_S else None
 
 
 # ── a loja ───────────────────────────────────────────────────────────────

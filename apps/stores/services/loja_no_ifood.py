@@ -164,3 +164,14 @@ def salvar_horarios(store, horarios: list):
             raise LojaNoIfoodErro('O fim do turno tem que ser depois do início.')
         turnos.append({'dayOfWeek': dia, 'start': f'{_hhmm(inicio)}:00', 'duration': fim - inicio})
     _chamar(store, 'PUT', '/opening-hours', {'storeId': _merchant(store), 'shifts': turnos})
+
+
+def lojas_do_app() -> list:
+    """GET /merchants: as lojas que aprovaram o app (o painel oferece para escolher)."""
+    try:
+        dados = ifood_oauth.api(_app(), 'GET', '/merchant/v1.0/merchants', params={'page': 1, 'size': 100}) or []
+    except ifood_oauth.IfoodRecusou as exc:
+        raise LojaNoIfoodErro(str(exc)[:300]) from exc
+    return [{'id': str(m.get('id') or ''), 'nome': str(m.get('name') or ''),
+             'razao_social': str(m.get('corporateName') or '')}
+            for m in dados if isinstance(m, dict) and m.get('id')]

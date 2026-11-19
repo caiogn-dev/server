@@ -16,6 +16,7 @@ responder 401, esquece o token e pede outro uma vez.
 Há dois apps: "pedidos" (Order/Events — credencial só sai após homologação) e
 "entregas" (Shipping — chamar entregador para pedido nosso).
 """
+from unittest import mock
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -150,3 +151,41 @@ class ApiTest(TestCase):
             self.assertEqual(ifood_oauth.api('entregas', 'GET', '/x'), {'ok': 1})
         self.assertEqual(req.call_count, 2)
         self.assertEqual(req.call_args.kwargs['headers']['Authorization'], 'Bearer novo')
+
+
+
+@override_settings(IFOOD_CLIENT_ID='app-p', IFOOD_CLIENT_SECRET='s')
+class RetryTest(TestCase):
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()
+
+    def _resp(self, status, corpo=b'{}', cab=None):
+        r = mock.Mock(status_code=status, content=corpo, text=corpo.decode(), headers=cab or {})
+        r.json.return_value = {}
+        return r
+
+    def test_5xx_tenta_de_novo_com_backoff(self):
+        from apps.stores.services import ifood_oauth
+        with mock.patch.object(ifood_oauth, 'token', return_value='t'), \
+             mock.patch('requests.request', side_effect=[self._resp(503), self._resp(200)]) as req, \
+             mock.patch('time.sleep') as dorme:
+            self.assertEqual(ifood_oauth.api('pedidos', 'GET', '/x'), {})
+        self.assertEqual(req.call_count, 2)
+        dorme.assert_called_once_with(0.5)
+
+    def test_429_respeita_retry_after(self):
+        from apps.stores.services import ifood_oauth
+        with mock.patch.object(ifood_oauth, 'token', return_value='t'), \
+             mock.patch('requests.request', side_effect=[self._resp(429, cab={'Retry-After': '2'}), self._resp(200)]), \
+             mock.patch('time.sleep') as dorme:
+            ifood_oauth.api('pedidos', 'GET', '/x')
+        dorme.assert_called_once_with(2.0)
+
+    def test_desiste_depois_de_3(self):
+        from apps.stores.services import ifood_oauth
+        with mock.patch.object(ifood_oauth, 'token', return_value='t'), \
+             mock.patch('requests.request', return_value=self._resp(500)) as req, mock.patch('time.sleep'):
+            with self.assertRaises(ifood_oauth.IfoodRecusou):
+                ifood_oauth.api('pedidos', 'GET', '/x')
+        self.assertEqual(req.call_count, 3)
