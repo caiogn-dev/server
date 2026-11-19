@@ -179,6 +179,28 @@ class UnifiedDeliveryService:
                 'regiao': regras.para_api(regioes.agora_na_loja(store)),
             }
 
+        # 3b. Frete pelo iFood Entrega (loja escolheu cobrar o que o iFood cota).
+        # Recusa do iFood (fora dos ~10 km, sem frota, fora do ar) → segue na
+        # tabela da loja abaixo: o iFood é opção, nunca trava.
+        from apps.stores.services import entrega_ifood
+        frete_ifood = entrega_ifood.frete_para_o_cliente(store, coords['lat'], coords['lng'])
+        if frete_ifood is not None:
+            fee = frete_ifood['fee'] + (Decimal('2.00') if rain_surcharge else Decimal('0'))
+            return {
+                'success': True,
+                'fee': float(fee),
+                'distance_km': distance_km,
+                'duration_minutes': frete_ifood.get('duration_minutes') or duration_minutes,
+                'distancia_aproximada': distancia_aproximada,
+                'method': 'delivery',
+                'zone_name': 'Entrega iFood',
+                'reason': f"Cotação iFood ({frete_ifood['distance_km']:.1f} km)",
+                'provider': 'ifood',
+                'ifood_quote_id': frete_ifood['quote_id'],
+                'raw_address': coords.get('formatted_address', ''),
+                'address_components': coords.get('address_components', {}),
+            }
+
         # 4. Verificar se está dentro da área de entrega máxima
         max_km = store.metadata.get('delivery_max_km', 16)
         if distance_km > float(max_km):

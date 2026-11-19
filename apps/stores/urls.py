@@ -216,8 +216,11 @@ from .api.analytics_views import (
     StoreScoreView,
 )
 from .api.repasse_99_views import ImportarExtrato99View
+from .api.entrega_ifood_views import (
+    EntregaIfoodCancelarView, EntregaIfoodChamarView, EntregaIfoodView,
+)
 from .api.integracoes_views import (
-    IfoodConcluirView, IfoodDesconectarView, IfoodIniciarView, IntegracoesDaLojaView,
+    IfoodConfigView, IfoodDesconectarView, IntegracoesDaLojaView,
 )
 from .api.payment_views import (
     StorePaymentViewSet, StorePaymentGatewayViewSet, StorePaymentWebhookEventViewSet
@@ -457,6 +460,10 @@ urlpatterns = [
     path('customer/orders/<uuid:order_id>/', CustomerOrderDetailView.as_view(), name='customer-order-detail'),
 
     # WhatsApp confirmation link
+    path('orders/<uuid:order_id>/entrega-ifood/', EntregaIfoodView.as_view(), name='entrega-ifood'),
+    path('orders/<uuid:order_id>/entrega-ifood/chamar/', EntregaIfoodChamarView.as_view(), name='entrega-ifood-chamar'),
+    path('orders/<uuid:order_id>/entrega-ifood/cancelar/', EntregaIfoodCancelarView.as_view(),
+         name='entrega-ifood-cancelar'),
     path('orders/<uuid:order_id>/whatsapp/', OrderWhatsAppView.as_view(), name='order-whatsapp'),
     path('orders/<uuid:order_id>/receipt/', OrderReceiptView.as_view(), name='order-receipt'),
     
@@ -505,8 +512,7 @@ urlpatterns = [
     path('reports/channels/', ChannelsReportView.as_view(), name='channels-report'),
     path('reports/99food/extrato/', ImportarExtrato99View.as_view(), name='importar-extrato-99'),
     path('integracoes/', IntegracoesDaLojaView.as_view(), name='integracoes-da-loja'),
-    path('integracoes/ifood/iniciar/', IfoodIniciarView.as_view(), name='ifood-iniciar'),
-    path('integracoes/ifood/concluir/', IfoodConcluirView.as_view(), name='ifood-concluir'),
+    path('integracoes/ifood/', IfoodConfigView.as_view(), name='ifood-config'),
     path('integracoes/ifood/desconectar/', IfoodDesconectarView.as_view(), name='ifood-desconectar'),
     path('reports/geography/', GeographyReportView.as_view(), name='geography-report'),
     path('reports/sla/', SlaReportView.as_view(), name='sla-report'),

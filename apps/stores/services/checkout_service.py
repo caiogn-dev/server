@@ -543,6 +543,9 @@ class CheckoutService:
             'lat': result.get('lat'),
             'lng': result.get('lng'),
             'coordinate_source': result.get('coordinate_source'),
+            # Frete cotado pelo iFood Entrega: o quoteId viaja até o pedido.
+            **({'provider': result['provider'], 'ifood_quote_id': result.get('ifood_quote_id')}
+               if result.get('provider') else {}),
         }
 
     @staticmethod

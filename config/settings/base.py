@@ -666,6 +666,15 @@ SPECTACULAR_SETTINGS = {
 
 # Mercado Pago
 MERCADO_PAGO_ACCESS_TOKEN = os.environ.get('MERCADO_PAGO_ACCESS_TOKEN', '')
+
+# iFood — apps CENTRALIZADOS da plataforma (portal developer.ifood.com.br).
+# "pedidos" recebe os pedidos do iFood (Order/Events); "entregas" chama o
+# entregador do iFood para pedido nosso (Shipping). Credenciais separadas
+# porque o iFood só libera a de Order depois da homologação.
+IFOOD_CLIENT_ID = os.environ.get('IFOOD_CLIENT_ID', '')
+IFOOD_CLIENT_SECRET = os.environ.get('IFOOD_CLIENT_SECRET', '')
+IFOOD_ENTREGAS_CLIENT_ID = os.environ.get('IFOOD_ENTREGAS_CLIENT_ID', '')
+IFOOD_ENTREGAS_CLIENT_SECRET = os.environ.get('IFOOD_ENTREGAS_CLIENT_SECRET', '')
 MERCADO_PAGO_WEBHOOK_SECRET = os.environ.get('MERCADO_PAGO_WEBHOOK_SECRET', '')
 MERCADO_PAGO_STATEMENT_DESCRIPTOR = os.environ.get('MERCADO_PAGO_STATEMENT_DESCRIPTOR', 'CARDAPIDEX')
 # Nome do titular da conta coletora exibido no aviso do PIX (o banco do pagador

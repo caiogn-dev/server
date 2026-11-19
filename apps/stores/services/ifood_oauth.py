@@ -1,85 +1,150 @@
-"""Autenticação do iFood: um app, muitos restaurantes.
+"""Autenticação do iFood: apps CENTRALIZADOS, uma credencial para todas as lojas.
 
-NÃO EXISTE TOKEN ESTÁTICO no iFood. Só OAuth2, e os dois fluxos batem no mesmo
-endereço (`POST /authentication/v1.0/oauth/token`, corpo form-urlencoded). O que
-muda é o `grantType`:
+Desde 19/11/2026. Antes era o modelo distribuído (cada lojista gerava um
+userCode e colava o código de autorização no painel). Trocado porque webhook
+de eventos só existe para app centralizado e o centralizado é o desenho do
+iFood para sistema na nuvem que atende muitas lojas.
 
-    centralizado   `client_credentials` — para quem integra as PRÓPRIAS lojas.
-                   Sem refreshToken: cada renovação repete a chamada.
+    token        `client_credentials` em POST /authentication/v1.0/oauth/token.
+                 Sem refreshToken: renovar é pedir de novo. Vale ~6 h e cobre
+                 TODAS as lojas que autorizaram o app.
+    loja         informa o `merchant_id` (UUID) e aprova o app no Portal do
+                 Parceiro. Sem a aprovação o iFood responde 403.
 
-    distribuído    `authorization_code` e depois `refresh_token` — para quem
-                   integra lojas DE TERCEIROS. O lojista autoriza uma vez com
-                   um `userCode` no portal, e o refresh renova sozinho daí em
-                   diante.
+Dois apps, credenciais separadas (o iFood só libera a de Order depois da
+homologação):
 
-ESTE MÓDULO IMPLEMENTA O DISTRIBUÍDO, e a razão é o negócio: o Cardapidex é
-vendido para donos de restaurante, cada um com o próprio cadastro no iFood.
-Centralizado só serviria se todas as lojas fossem da mesma empresa. Começar
-centralizado e migrar depois obrigaria a refazer o vínculo com cada cliente,
-um a um, pedindo que autorizem de novo.
+    pedidos   IFOOD_CLIENT_ID / IFOOD_CLIENT_SECRET            Order, Events
+    entregas  IFOOD_ENTREGAS_CLIENT_ID / _CLIENT_SECRET        Shipping, Events
 
-O TOKEN DURA 6 HORAS. É por isso que `token_valido()` existe e é o ÚNICO jeito
-de obter o token: quem chama recebe um token bom ou `None`, e nunca precisa
-lembrar de renovar. O OAuth do Mercado Pago neste projeto tinha `renovar()`
-escrito e sem nenhum caller — a loja conectava, funcionava, e pararia de vender
-meses depois. Aqui a renovação está no caminho de quem usa.
+`api()` é a porta única de chamada: põe o token, e num 401 esquece o token e
+tenta UMA vez com outro — token vencido no meio de um pedido entrando é o pior
+momento para falhar.
 """
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+import re
 
 from django.conf import settings
-from django.utils import timezone
+from django.core.cache import cache
 
 logger = logging.getLogger(__name__)
 
 BASE = 'https://merchant-api.ifood.com.br'
 URL_TOKEN = f'{BASE}/authentication/v1.0/oauth/token'
-URL_USER_CODE = f'{BASE}/authentication/v1.0/oauth/userCode'
+TIMEOUT = 10
 
-#: Renova com folga. Token que vence no meio de uma sequência de chamadas
-#: derruba a operação no pior momento — o pedido entrando.
-FOLGA = timedelta(minutes=10)
+#: Renova com folga: o cache expira 10 min antes do iFood.
+FOLGA_S = 600
+
+_CREDENCIAIS = {
+    'pedidos': ('IFOOD_CLIENT_ID', 'IFOOD_CLIENT_SECRET'),
+    'entregas': ('IFOOD_ENTREGAS_CLIENT_ID', 'IFOOD_ENTREGAS_CLIENT_SECRET'),
+}
+
+_UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
 
 class IfoodNaoConfigurado(Exception):
-    """Falta clientId/clientSecret do aplicativo da plataforma."""
+    """Falta clientId/clientSecret do app na plataforma."""
 
 
 class IfoodRecusou(Exception):
-    """O iFood respondeu com erro. Carrega o motivo para a tela mostrar."""
+    """O iFood respondeu com erro. Carrega status e corpo para quem trata."""
+
+    def __init__(self, mensagem: str, status: int | None = None, corpo: str = ''):
+        super().__init__(mensagem)
+        self.status = status
+        self.corpo = corpo
 
 
-def esta_configurado() -> bool:
-    return bool(
-        getattr(settings, 'IFOOD_CLIENT_ID', '')
-        and getattr(settings, 'IFOOD_CLIENT_SECRET', '')
-    )
+# ── credencial e token ───────────────────────────────────────────────────
+
+def credenciais(app: str) -> tuple[str, str]:
+    chave_id, chave_segredo = _CREDENCIAIS[app]
+    return getattr(settings, chave_id, '') or '', getattr(settings, chave_segredo, '') or ''
 
 
-def _exigir_configuracao():
-    if not esta_configurado():
-        raise IfoodNaoConfigurado(
-            'Aplicativo do iFood sem clientId/clientSecret. '
-            'Configure IFOOD_CLIENT_ID e IFOOD_CLIENT_SECRET.'
-        )
+def esta_configurado(app: str = 'pedidos') -> bool:
+    return all(credenciais(app))
+
+
+def _chave_cache(app: str) -> str:
+    return f'ifood:token:{app}:{credenciais(app)[0]}'
 
 
 def _post(url: str, dados: dict) -> dict:
-    """A chamada crua. Isolada para o teste substituir sem tocar em rede."""
+    """A chamada crua do token. Isolada para o teste substituir sem rede."""
     import requests
 
     resposta = requests.post(
-        url,
-        data=dados,
+        url, data=dados,
         headers={'Content-Type': 'application/x-www-form-urlencoded'},
         timeout=20,
     )
     if resposta.status_code >= 400:
-        raise IfoodRecusou(f'{resposta.status_code}: {resposta.text[:300]}')
+        raise IfoodRecusou(f'{resposta.status_code}: {resposta.text[:300]}', resposta.status_code, resposta.text)
     return resposta.json()
 
+
+def token(app: str = 'pedidos') -> str:
+    """Token bom para usar agora. Levanta se o app não está configurado ou o iFood recusa."""
+    client_id, segredo = credenciais(app)
+    if not (client_id and segredo):
+        raise IfoodNaoConfigurado(f'App "{app}" do iFood sem credencial na plataforma.')
+    chave = _chave_cache(app)
+    guardado = cache.get(chave)
+    if guardado:
+        return guardado
+    dados = _post(URL_TOKEN, {
+        'grantType': 'client_credentials', 'clientId': client_id, 'clientSecret': segredo,
+    })
+    novo = dados.get('accessToken') or ''
+    if not novo:
+        raise IfoodRecusou('iFood não devolveu token.')
+    validade = int(dados.get('expiresIn') or 21600)
+    cache.set(chave, novo, timeout=max(60, validade - FOLGA_S))
+    return novo
+
+
+def esquecer_token(app: str):
+    cache.delete(_chave_cache(app))
+
+
+def api(app: str, metodo: str, caminho: str, corpo=None, cabecalhos=None, params=None, timeout=TIMEOUT):
+    """Chamada autenticada. JSON da resposta, ou None sem corpo (202/204).
+
+    401 → esquece o token e tenta uma vez. Outros ≥400 → `IfoodRecusou`.
+    """
+    import requests
+    from requests import RequestException
+
+    for tentativa in (1, 2):
+        headers = {'Authorization': f'Bearer {token(app)}', **(cabecalhos or {})}
+        try:
+            resposta = requests.request(
+                metodo, f'{BASE}{caminho}', json=corpo, params=params, headers=headers, timeout=timeout,
+            )
+        except RequestException as exc:
+            raise IfoodRecusou(f'iFood fora do ar: {exc}') from exc
+        if resposta.status_code == 401 and tentativa == 1:
+            esquecer_token(app)
+            continue
+        if resposta.status_code >= 400:
+            raise IfoodRecusou(
+                f'{resposta.status_code}: {resposta.text[:300]}', resposta.status_code, resposta.text,
+            )
+        if resposta.status_code in (202, 204) or not resposta.content:
+            return None
+        try:
+            return resposta.json()
+        except ValueError:
+            return None
+    return None  # pragma: no cover — o laço sempre retorna ou levanta
+
+
+# ── a loja ───────────────────────────────────────────────────────────────
 
 def integracao_da_loja(store):
     from apps.stores.models import StoreIfoodIntegration
@@ -87,115 +152,72 @@ def integracao_da_loja(store):
     return integracao
 
 
-# ── o vínculo: o lojista autoriza uma vez ───────────────────────────────
+def _app_para_conferir() -> str | None:
+    for app in ('pedidos', 'entregas'):
+        if esta_configurado(app):
+            return app
+    return None
 
-def iniciar_vinculo(store) -> dict:
-    """Pede o código que o lojista digita no Portal do Parceiro.
 
-    Devolve o código e o endereço. O `authorizationCodeVerifier` fica guardado:
-    ele só existe entre pedir o código e trocar pelo token, e perdê-lo obriga o
-    lojista a recomeçar — depois de já ter saído da tela.
-    """
-    _exigir_configuracao()
-
-    dados = _post(URL_USER_CODE, {'clientId': settings.IFOOD_CLIENT_ID})
-
+def verificar(store):
+    """Pergunta ao iFood se a loja autorizou o app. Atualiza `conectado`/nome/erro."""
     integracao = integracao_da_loja(store)
-    integracao.user_code = dados.get('userCode', '')
-    integracao.authorization_code_verifier = dados.get('authorizationCodeVerifier', '')
-    integracao.user_code_expires_at = timezone.now() + timedelta(
-        seconds=int(dados.get('expiresIn') or 600),
-    )
-    integracao.save(update_fields=[
-        'user_code', 'authorization_code_verifier', 'user_code_expires_at', 'updated_at',
-    ])
-
-    return {
-        'user_code': integracao.user_code,
-        # A URL completa já leva o código: o lojista só confirma no portal.
-        'url': dados.get('verificationUrlComplete') or dados.get('verificationUrl', ''),
-        'expira_em': integracao.user_code_expires_at,
-    }
-
-
-def concluir_vinculo(store, authorization_code: str):
-    """Troca o código do portal pelos tokens. Só acontece uma vez por loja."""
-    _exigir_configuracao()
-    integracao = integracao_da_loja(store)
-
-    dados = _post(URL_TOKEN, dados={
-        'grantType': 'authorization_code',
-        'clientId': settings.IFOOD_CLIENT_ID,
-        'clientSecret': settings.IFOOD_CLIENT_SECRET,
-        'authorizationCode': (authorization_code or '').strip(),
-        'authorizationCodeVerifier': integracao.authorization_code_verifier,
-    })
-    return _guardar_tokens(integracao, dados)
-
-
-# ── o uso: quem chama nunca precisa lembrar de renovar ──────────────────
-
-def token_valido(store):
-    """O token bom para usar AGORA, renovando se preciso. `None` se não dá.
-
-    Único ponto de saída de propósito: espalhar "se venceu, renove" pelos
-    chamadores é como se esquece de renovar em um deles.
-    """
-    integracao = integracao_da_loja(store)
-    if not integracao.conectado or not integracao.refresh_token:
-        return None
-
-    vence = integracao.token_expires_at
-    if integracao.access_token and vence and vence - FOLGA > timezone.now():
-        return integracao.access_token
-
-    try:
-        _exigir_configuracao()
-        dados = _post(URL_TOKEN, dados={
-            'grantType': 'refresh_token',
-            'clientId': settings.IFOOD_CLIENT_ID,
-            'clientSecret': settings.IFOOD_CLIENT_SECRET,
-            'refreshToken': integracao.refresh_token,
-        })
-    except (IfoodRecusou, IfoodNaoConfigurado) as erro:
-        # O lojista pode ter revogado o acesso no portal. A loja precisa SABER:
-        # falhar calado aqui é o pedido do iFood parando de entrar sem ninguém
-        # perceber, que é o modo de falha mais caro de uma integração de venda.
+    app = _app_para_conferir()
+    if not integracao.merchant_id or app is None:
         integracao.conectado = False
-        integracao.ultimo_erro = str(erro)[:500]
+        integracao.save(update_fields=['conectado', 'updated_at'])
+        return integracao
+    try:
+        dados = api(app, 'GET', f'/merchant/v1.0/merchants/{integracao.merchant_id}') or {}
+    except (IfoodRecusou, IfoodNaoConfigurado) as erro:
+        integracao.conectado = False
+        status = getattr(erro, 'status', None)
+        if status in (401, 403, 404) or 'permission' in str(erro).lower():
+            integracao.ultimo_erro = 'Aprove o app Cardapidex no Portal do Parceiro do iFood.'
+        else:
+            integracao.ultimo_erro = str(erro)[:500]
         integracao.save(update_fields=['conectado', 'ultimo_erro', 'updated_at'])
-        logger.warning('iFood: renovação recusada para %s: %s', store.slug, erro)
-        return None
-
-    return _guardar_tokens(integracao, dados).access_token
-
-
-def _guardar_tokens(integracao, dados: dict):
-    integracao.access_token = dados.get('accessToken', '')
-    novo_refresh = dados.get('refreshToken', '')
-    if novo_refresh:
-        # O iFood pode rotacionar o refresh. Guardar o novo é o que impede a
-        # próxima renovação de falhar com um token já usado.
-        integracao.refresh_token = novo_refresh
-    integracao.token_expires_at = timezone.now() + timedelta(
-        seconds=int(dados.get('expiresIn') or 21600),
-    )
-    integracao.conectado = bool(integracao.access_token)
+        return integracao
+    integracao.conectado = True
+    integracao.merchant_name = str(dados.get('name') or integracao.merchant_name or '')[:255]
     integracao.ultimo_erro = ''
-    integracao.ultima_renovacao = timezone.now()
-    integracao.save()
+    integracao.save(update_fields=['conectado', 'merchant_name', 'ultimo_erro', 'updated_at'])
     return integracao
 
 
-def desconectar(store):
-    """Esquece o vínculo. O lojista revoga o app no Portal do Parceiro se quiser."""
+def vincular(store, merchant_id: str):
+    """Guarda o ID da loja no iFood e confere se o app já foi aprovado."""
+    merchant_id = (merchant_id or '').strip().lower()
+    if not _UUID.match(merchant_id):
+        raise ValueError('ID da loja no iFood inválido (formato UUID).')
     integracao = integracao_da_loja(store)
-    integracao.access_token = ''
-    integracao.refresh_token = ''
-    integracao.token_expires_at = None
-    integracao.authorization_code_verifier = ''
-    integracao.user_code = ''
+    if integracao.merchant_id != merchant_id:
+        integracao.merchant_id = merchant_id
+        integracao.merchant_name = ''
+        integracao.save(update_fields=['merchant_id', 'merchant_name', 'updated_at'])
+    return verificar(store)
+
+
+def token_valido(store):
+    """Token do app de PEDIDOS para esta loja, ou None (loja sem ID / app sem credencial)."""
+    integracao = integracao_da_loja(store)
+    if not integracao.merchant_id or not esta_configurado('pedidos'):
+        return None
+    try:
+        return token('pedidos')
+    except (IfoodRecusou, IfoodNaoConfigurado) as erro:
+        logger.warning('iFood: token de pedidos recusado (%s): %s', store.slug, erro)
+        return None
+
+
+def desconectar(store):
+    """Esquece a loja e desliga as entregas. O lojista revoga no portal se quiser."""
+    integracao = integracao_da_loja(store)
+    integracao.merchant_id = ''
+    integracao.merchant_name = ''
     integracao.conectado = False
     integracao.ultimo_erro = ''
+    integracao.frete_pelo_ifood = False
+    integracao.chamar_entregador = integracao.ChamarEntregador.MANUAL
     integracao.save()
     return integracao

@@ -12,6 +12,7 @@ são contas da empresa, não da loja, e a tela já os lê pelos endpoints deles.
 from __future__ import annotations
 
 from datetime import timedelta
+from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
 from django.utils import timezone
@@ -21,7 +22,7 @@ from rest_framework.views import APIView
 
 from ..models import StoreOrder, StorePaymentGateway
 from ..models.ifood import StoreIfoodIntegration
-from ..services import ifood_oauth, pedidos_do_ifood
+from ..services import ifood_oauth
 from ..services.pedidos_da_99 import PROVEDOR as FONTE_99
 from .repasse_99_views import _loja
 
@@ -39,10 +40,16 @@ def _estado_99(loja) -> dict:
 def _estado_ifood(loja) -> dict:
     vinculo = StoreIfoodIntegration.objects.filter(store=loja).first()
     return {
-        'disponivel': ifood_oauth.esta_configurado(),
+        'disponivel': ifood_oauth.esta_configurado('pedidos'),
+        'entregas_disponivel': ifood_oauth.esta_configurado('entregas'),
+        'merchant_id': (vinculo.merchant_id if vinculo else '') or '',
         'conectado': bool(vinculo and vinculo.conectado),
         'loja': (vinculo.merchant_name if vinculo else '') or '',
         'erro': (vinculo.ultimo_erro if vinculo else '') or '',
+        'frete_pelo_ifood': bool(vinculo and vinculo.frete_pelo_ifood),
+        'acrescimo_frete': f'{(vinculo.acrescimo_frete if vinculo else Decimal("0")):.2f}',
+        'chamar_entregador': vinculo.chamar_entregador if vinculo else 'manual',
+        'tempo_preparo_min': vinculo.tempo_preparo_min if vinculo else 15,
     }
 
 
@@ -75,11 +82,10 @@ class IntegracoesDaLojaView(APIView):
         })
 
 
-# ── iFood: o lojista conecta pelo painel ─────────────────────────────────
+# ── iFood: app centralizado ──────────────────────────────────────────────
 #
-# 1. "Conectar iFood" → POST iniciar → código + link do Portal do Parceiro.
-# 2. No portal o lojista autoriza o app e recebe um código de autorização.
-# 3. Cola no painel → POST concluir → tokens guardados + loja do iFood achada.
+# O lojista informa o ID da loja no iFood e aprova o app Cardapidex no Portal
+# do Parceiro. Não há código para trocar: o token é da plataforma.
 
 def _loja_ou_erro(request):
     if not request.query_params.get('store'):
@@ -90,42 +96,51 @@ def _loja_ou_erro(request):
     return loja, None
 
 
-class IfoodIniciarView(APIView):
+class IfoodConfigView(APIView):
+    """POST com qualquer parte de: merchant_id, frete_pelo_ifood, acrescimo_frete,
+    chamar_entregador, tempo_preparo_min."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         loja, erro = _loja_ou_erro(request)
         if erro:
             return erro
-        try:
-            dados = ifood_oauth.iniciar_vinculo(loja)
-        except ifood_oauth.IfoodNaoConfigurado:
-            return Response({'detail': 'Integração com o iFood ainda não disponível.'}, status=503)
-        except ifood_oauth.IfoodRecusou as exc:
-            return Response({'detail': f'O iFood recusou: {exc}'}, status=400)
-        return Response({**dados, 'expira_em': dados['expira_em'].isoformat()})
-
-
-class IfoodConcluirView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request):
-        loja, erro = _loja_ou_erro(request)
-        if erro:
-            return erro
-        codigo = str(request.data.get('authorization_code') or '').strip()
-        if not codigo:
-            return Response({'detail': 'Cole o código que o iFood mostrou.'}, status=400)
-        try:
-            ifood_oauth.concluir_vinculo(loja, codigo)
-        except ifood_oauth.IfoodNaoConfigurado:
-            return Response({'detail': 'Integração com o iFood ainda não disponível.'}, status=503)
-        except ifood_oauth.IfoodRecusou as exc:
-            return Response({'detail': f'O iFood recusou: {exc}'}, status=400)
-        try:
-            pedidos_do_ifood.descobrir_loja_no_ifood(loja)
-        except pedidos_do_ifood.ErroDoIfood:
-            pass  # conectou; o nome da loja aparece no próximo polling bem-sucedido
+        dados = request.data or {}
+        integracao = ifood_oauth.integracao_da_loja(loja)
+        campos = []
+        if 'frete_pelo_ifood' in dados:
+            integracao.frete_pelo_ifood = bool(dados['frete_pelo_ifood'])
+            campos.append('frete_pelo_ifood')
+        if 'acrescimo_frete' in dados:
+            try:
+                valor = Decimal(str(dados['acrescimo_frete'] or '0').replace(',', '.')).quantize(Decimal('0.01'))
+            except (InvalidOperation, ValueError):
+                return Response({'detail': 'Acréscimo inválido.'}, status=400)
+            if valor < 0 or valor > 100:
+                return Response({'detail': 'Acréscimo entre 0 e 100.'}, status=400)
+            integracao.acrescimo_frete = valor
+            campos.append('acrescimo_frete')
+        if 'chamar_entregador' in dados:
+            if dados['chamar_entregador'] not in StoreIfoodIntegration.ChamarEntregador.values:
+                return Response({'detail': 'Opção inválida.'}, status=400)
+            integracao.chamar_entregador = dados['chamar_entregador']
+            campos.append('chamar_entregador')
+        if 'tempo_preparo_min' in dados:
+            try:
+                minutos = int(dados['tempo_preparo_min'])
+            except (TypeError, ValueError):
+                return Response({'detail': 'Tempo de preparo inválido.'}, status=400)
+            if not 0 <= minutos <= 180:
+                return Response({'detail': 'Tempo de preparo entre 0 e 180 min.'}, status=400)
+            integracao.tempo_preparo_min = minutos
+            campos.append('tempo_preparo_min')
+        if campos:
+            integracao.save(update_fields=[*campos, 'updated_at'])
+        if 'merchant_id' in dados:
+            try:
+                ifood_oauth.vincular(loja, str(dados['merchant_id'] or ''))
+            except ValueError as exc:
+                return Response({'detail': str(exc)}, status=400)
         return Response(_estado_ifood(loja))
 
 

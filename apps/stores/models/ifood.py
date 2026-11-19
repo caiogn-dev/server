@@ -1,5 +1,10 @@
 """O vínculo de uma loja com o iFood.
 
+Desde 19/11/2026 o app é CENTRALIZADO (credencial da plataforma, ver
+`ifood_oauth`): o que é da loja é só o `merchant_id` e as escolhas dela. Os
+campos de token/userCode abaixo são do modelo distribuído antigo e ficaram
+sem uso — não foram apagados para não exigir migration destrutiva.
+
 UM APP, MUITOS RESTAURANTES. O Cardapidex é vendido para donos de restaurante,
 e cada um tem o próprio cadastro no iFood. Por isso o modelo guarda o vínculo
 por LOJA: as credenciais do aplicativo (clientId/clientSecret) são da
@@ -47,6 +52,25 @@ class StoreIfoodIntegration(models.Model):
     #: pedido parando de entrar sem ninguém perceber.
     ultimo_erro = models.TextField(blank=True, default='')
     ultima_renovacao = models.DateTimeField(null=True, blank=True)
+
+    # ── iFood Entrega (chamar entregador do iFood para pedido nosso) ──────
+    #: Cobrar do cliente o frete que o iFood cota para o pino. Desligado = a
+    #: tabela da loja continua valendo e o iFood só leva o pedido.
+    frete_pelo_ifood = models.BooleanField(default=False)
+    #: Somado à cotação do iFood antes de mostrar ao cliente (pode ser 0).
+    acrescimo_frete = models.DecimalField(max_digits=6, decimal_places=2, default=0)
+
+    class ChamarEntregador(models.TextChoices):
+        MANUAL = 'manual', 'Manual'
+        CONFIRMADO = 'confirmado', 'Ao confirmar o pedido'
+        PRONTO = 'pronto', 'Quando ficar pronto'
+
+    chamar_entregador = models.CharField(
+        max_length=12, choices=ChamarEntregador.choices, default=ChamarEntregador.MANUAL,
+    )
+    #: Com "ao confirmar", o iFood segura a alocação por este tempo para o
+    #: entregador chegar junto com o pedido pronto (`preparationTime`).
+    tempo_preparo_min = models.PositiveSmallIntegerField(default=15)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

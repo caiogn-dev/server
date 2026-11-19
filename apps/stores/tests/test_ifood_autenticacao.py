@@ -1,190 +1,152 @@
-"""Autenticação do iFood: um app, muitos restaurantes.
+"""Autenticação do iFood: app CENTRALIZADO, uma credencial para todas as lojas.
 
-O DONO PEDIU (05/09): "deixe pronto para o ifood oauth, ou então por token...
-veja qual melhor e aí eu configuro a conta depois".
+Mudou em 19/11/2026. O modelo distribuído (lojista gera userCode, cola código
+no painel) foi trocado pelo centralizado porque:
 
-NÃO EXISTE TOKEN ESTÁTICO. O iFood só oferece OAuth2, e os dois fluxos batem no
-mesmo endereço — `POST /authentication/v1.0/oauth/token`, corpo
-`x-www-form-urlencoded`. O que muda é o `grantType`:
+- webhook de eventos só existe para app centralizado no portal do iFood;
+- o próprio portal descreve o centralizado como "instalação centralizada para
+  todos os parceiros" — é o caso de um SaaS na nuvem;
+- a loja não precisa mais trocar código: informa o ID dela no iFood e aprova o
+  app no Portal do Parceiro.
 
-  centralizado   `client_credentials` — para quem integra as PRÓPRIAS lojas.
-                 Não devolve refreshToken: cada renovação repete a chamada.
+O token é `client_credentials`, dura ~6 h e vale para TODAS as lojas que
+autorizaram o app. Fica em cache; quem chama recebe um token bom e, se o iFood
+responder 401, esquece o token e pede outro uma vez.
 
-  distribuído    `authorization_code` e depois `refresh_token` — para quem
-                 integra lojas DE TERCEIROS. Cada lojista autoriza uma vez com
-                 um `userCode`, e a partir daí o refresh renova sozinho.
-
-ESCOLHI DISTRIBUÍDO, e a razão é o negócio: o Cardapidex é vendido para donos
-de restaurante, cada um com o próprio cadastro no iFood. Centralizado só
-serviria se todas as lojas fossem do Caio. Fazer centralizado agora e migrar
-depois seria refazer o vínculo com cada cliente, um a um, pedindo que
-autorizem de novo.
-
-O TOKEN DURA 6 HORAS. Isso é o coração deste arquivo, e é onde este projeto já
-se queimou: o OAuth do Mercado Pago tinha `renovar()` escrito e SEM NENHUM
-CALLER — a loja conectava, funcionava, e pararia de vender meses depois sem
-ninguém entender por quê. Aqui a renovação tem dono, e um teste garante que ela
-continue tendo.
+Há dois apps: "pedidos" (Order/Events — credencial só sai após homologação) e
+"entregas" (Shipping — chamar entregador para pedido nosso).
 """
-from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test import TestCase, override_settings
-from django.utils import timezone
 
 from apps.stores.models import Store
 from apps.stores.services import ifood_oauth
 
 User = get_user_model()
 
-CREDENCIAIS = {'IFOOD_CLIENT_ID': 'app-123', 'IFOOD_CLIENT_SECRET': 'segredo'}
+CREDENCIAIS = {
+    'IFOOD_CLIENT_ID': 'app-pedidos', 'IFOOD_CLIENT_SECRET': 'segredo-p',
+    'IFOOD_ENTREGAS_CLIENT_ID': 'app-entregas', 'IFOOD_ENTREGAS_CLIENT_SECRET': 'segredo-e',
+}
+MERCHANT = '00f0d5a7-6142-4120-b34d-1b1d36cdecec'
 
 
 @override_settings(**CREDENCIAIS)
-class IfoodAutenticacaoTest(TestCase):
+class TokenDoAppTest(TestCase):
     def setUp(self):
+        cache.clear()
+
+    def test_pede_client_credentials_com_a_credencial_do_app(self):
+        with patch.object(ifood_oauth, '_post', return_value={'accessToken': 'tok-e', 'expiresIn': 21600}) as post:
+            self.assertEqual(ifood_oauth.token('entregas'), 'tok-e')
+        dados = post.call_args.args[1]
+        self.assertEqual(dados['grantType'], 'client_credentials')
+        self.assertEqual(dados['clientId'], 'app-entregas')
+        self.assertEqual(dados['clientSecret'], 'segredo-e')
+
+    def test_token_fica_em_cache(self):
+        with patch.object(ifood_oauth, '_post', return_value={'accessToken': 'tok', 'expiresIn': 21600}) as post:
+            ifood_oauth.token('pedidos')
+            ifood_oauth.token('pedidos')
+        self.assertEqual(post.call_count, 1)
+
+    def test_cada_app_tem_o_seu_token(self):
+        respostas = [{'accessToken': 'tok-p', 'expiresIn': 21600}, {'accessToken': 'tok-e', 'expiresIn': 21600}]
+        with patch.object(ifood_oauth, '_post', side_effect=respostas):
+            self.assertEqual(ifood_oauth.token('pedidos'), 'tok-p')
+            self.assertEqual(ifood_oauth.token('entregas'), 'tok-e')
+
+    def test_esquecer_obriga_a_pedir_de_novo(self):
+        with patch.object(ifood_oauth, '_post', return_value={'accessToken': 'tok', 'expiresIn': 21600}) as post:
+            ifood_oauth.token('entregas')
+            ifood_oauth.esquecer_token('entregas')
+            ifood_oauth.token('entregas')
+        self.assertEqual(post.call_count, 2)
+
+    @override_settings(IFOOD_ENTREGAS_CLIENT_ID='', IFOOD_ENTREGAS_CLIENT_SECRET='')
+    def test_app_sem_credencial_nao_esta_configurado(self):
+        self.assertFalse(ifood_oauth.esta_configurado('entregas'))
+        self.assertTrue(ifood_oauth.esta_configurado('pedidos'))
+        with self.assertRaises(ifood_oauth.IfoodNaoConfigurado):
+            ifood_oauth.token('entregas')
+
+    def test_recusa_do_ifood_vira_erro_legivel(self):
+        with patch.object(ifood_oauth, '_post', side_effect=ifood_oauth.IfoodRecusou('403: No permissions')):
+            with self.assertRaises(ifood_oauth.IfoodRecusou):
+                ifood_oauth.token('entregas')
+
+
+@override_settings(**CREDENCIAIS)
+class LojaNoIfoodTest(TestCase):
+    def setUp(self):
+        cache.clear()
         dono = User.objects.create_user(username='dona-ifood', password='x')
         self.store = Store.objects.create(
             billing_exempt=True, name='Cê Saladas', slug='ce-ifood', owner=dono,
             store_type='food', status='active',
         )
 
-    # ── o vínculo: o lojista autoriza uma vez ───────────────────────────
+    def test_id_que_nao_e_uuid_e_recusado(self):
+        with self.assertRaises(ValueError):
+            ifood_oauth.vincular(self.store, '4327433')
 
-    def test_pede_o_codigo_que_o_lojista_digita_no_portal(self):
-        resposta = {
-            'userCode': 'ABCD-1234',
-            'authorizationCodeVerifier': 'verificador-xyz',
-            'verificationUrl': 'https://portal.ifood.com.br/apps/code',
-            'expiresIn': 600,
-        }
-        with patch.object(ifood_oauth, '_post', return_value=resposta):
-            vinculo = ifood_oauth.iniciar_vinculo(self.store)
-
-        self.assertEqual(vinculo['user_code'], 'ABCD-1234')
-        self.assertIn('portal.ifood', vinculo['url'])
-
-    def test_guarda_o_verificador_ate_o_lojista_voltar(self):
-        """O verificador só existe entre pedir o código e trocar por token.
-
-        Perdê-lo obriga o lojista a começar de novo — e ele já saiu da tela.
-        """
-        with patch.object(ifood_oauth, '_post', return_value={
-            'userCode': 'ABCD-1234', 'authorizationCodeVerifier': 'verificador-xyz',
-            'verificationUrl': 'https://portal.ifood.com.br/apps/code', 'expiresIn': 600,
-        }):
-            ifood_oauth.iniciar_vinculo(self.store)
-
-        integracao = ifood_oauth.integracao_da_loja(self.store)
-        self.assertEqual(integracao.authorization_code_verifier, 'verificador-xyz')
-
-    def test_conclui_o_vinculo_e_guarda_os_dois_tokens(self):
-        self._com_verificador()
-        resposta = {
-            'accessToken': 'tok-de-acesso',
-            'refreshToken': 'tok-de-renovacao',
-            'expiresIn': 21600,
-        }
-        with patch.object(ifood_oauth, '_post', return_value=resposta) as chamada:
-            ifood_oauth.concluir_vinculo(self.store, 'codigo-do-portal')
-
-        corpo = chamada.call_args.kwargs['dados']
-        self.assertEqual(corpo['grantType'], 'authorization_code')
-        self.assertEqual(corpo['authorizationCode'], 'codigo-do-portal')
-        self.assertEqual(corpo['authorizationCodeVerifier'], 'verificador-xyz')
-
-        integracao = ifood_oauth.integracao_da_loja(self.store)
-        self.assertEqual(integracao.access_token, 'tok-de-acesso')
-        self.assertEqual(integracao.refresh_token, 'tok-de-renovacao')
+    def test_vincular_guarda_o_id_e_confere_o_acesso(self):
+        with patch.object(ifood_oauth, 'api', return_value={'id': MERCHANT, 'name': 'Cê Saladas Palmas'}) as api:
+            integracao = ifood_oauth.vincular(self.store, f'  {MERCHANT.upper()} ')
+        self.assertEqual(integracao.merchant_id, MERCHANT)
         self.assertTrue(integracao.conectado)
+        self.assertEqual(integracao.merchant_name, 'Cê Saladas Palmas')
+        self.assertIn(f'/merchant/v1.0/merchants/{MERCHANT}', api.call_args.args[2])
 
-    def test_o_token_nao_fica_legivel_no_banco(self):
-        """Token do iFood é credencial de terceiro: vai cifrado, como o do MP.
-
-        A conferência é na COLUNA, não no atributo: `EncryptedCharField`
-        decifra na leitura, então ler pelo modelo devolveria o texto claro e o
-        teste passaria mesmo com a cifra desligada.
-        """
-        self._conectada(access='tok-secreto')
-
-        from django.db import connection
-        with connection.cursor() as cursor:
-            cursor.execute(
-                'SELECT access_token_encrypted FROM store_ifood_integrations '
-                'WHERE store_id = %s', [str(self.store.id)],
-            )
-            (guardado,) = cursor.fetchone()
-
-        self.assertNotIn('tok-secreto', guardado)
-        self.assertTrue(guardado)
-
-    # ── a renovação, que é onde este projeto já se queimou ──────────────
-
-    def test_token_perto_de_vencer_e_renovado_antes_de_usar(self):
-        self._conectada(expira_em=timedelta(minutes=4))
-        with patch.object(ifood_oauth, '_post', return_value={
-            'accessToken': 'novo', 'refreshToken': 'novo-refresh', 'expiresIn': 21600,
-        }) as chamada:
-            token = ifood_oauth.token_valido(self.store)
-
-        self.assertEqual(token, 'novo')
-        self.assertEqual(chamada.call_args.kwargs['dados']['grantType'], 'refresh_token')
-
-    def test_token_com_folga_nao_gasta_chamada(self):
-        self._conectada(expira_em=timedelta(hours=5))
-        with patch.object(ifood_oauth, '_post') as chamada:
-            token = ifood_oauth.token_valido(self.store)
-
-        self.assertEqual(token, 'tok-de-acesso')
-        chamada.assert_not_called()
-
-    def test_loja_sem_vinculo_nao_devolve_token(self):
-        self.assertIsNone(ifood_oauth.token_valido(self.store))
-
-    def test_refresh_recusado_marca_a_loja_como_desconectada(self):
-        """Lojista revogou o acesso no portal. A loja precisa SABER.
-
-        Falhar calado aqui é o pedido do iFood parando de entrar sem ninguém
-        perceber — o modo de falha mais caro de uma integração de vendas.
-        """
-        self._conectada(expira_em=timedelta(minutes=1))
-        with patch.object(ifood_oauth, '_post', side_effect=ifood_oauth.IfoodRecusou('invalid_grant')):
-            token = ifood_oauth.token_valido(self.store)
-
-        self.assertIsNone(token)
-        integracao = ifood_oauth.integracao_da_loja(self.store)
+    def test_loja_que_ainda_nao_autorizou_fica_aguardando(self):
+        with patch.object(ifood_oauth, 'api', side_effect=ifood_oauth.IfoodRecusou('403: No permissions granted')):
+            integracao = ifood_oauth.vincular(self.store, MERCHANT)
+        self.assertEqual(integracao.merchant_id, MERCHANT)
         self.assertFalse(integracao.conectado)
-        self.assertIn('invalid_grant', integracao.ultimo_erro)
+        self.assertIn('Portal do Parceiro', integracao.ultimo_erro)
 
-    # ── configuração ────────────────────────────────────────────────────
-
-    @override_settings(IFOOD_CLIENT_ID='', IFOOD_CLIENT_SECRET='')
-    def test_sem_credencial_do_app_avisa_em_vez_de_falhar_estranho(self):
-        with self.assertRaises(ifood_oauth.IfoodNaoConfigurado):
-            ifood_oauth.iniciar_vinculo(self.store)
-
-    def test_o_endereco_e_o_da_api_de_lojista(self):
-        self.assertEqual(
-            ifood_oauth.URL_TOKEN,
-            'https://merchant-api.ifood.com.br/authentication/v1.0/oauth/token',
-        )
-
-    # ── apoio ───────────────────────────────────────────────────────────
-
-    def _com_verificador(self):
-        with patch.object(ifood_oauth, '_post', return_value={
-            'userCode': 'ABCD-1234', 'authorizationCodeVerifier': 'verificador-xyz',
-            'verificationUrl': 'https://portal.ifood.com.br/apps/code', 'expiresIn': 600,
-        }):
-            ifood_oauth.iniciar_vinculo(self.store)
-
-    def _conectada(self, access='tok-de-acesso', expira_em=timedelta(hours=5)):
-        self._com_verificador()
-        with patch.object(ifood_oauth, '_post', return_value={
-            'accessToken': access, 'refreshToken': 'tok-de-renovacao', 'expiresIn': 21600,
-        }):
-            ifood_oauth.concluir_vinculo(self.store, 'codigo-do-portal')
+    def test_token_valido_exige_loja_vinculada(self):
+        self.assertIsNone(ifood_oauth.token_valido(self.store))
         integracao = ifood_oauth.integracao_da_loja(self.store)
-        integracao.token_expires_at = timezone.now() + expira_em
-        integracao.save(update_fields=['token_expires_at'])
+        integracao.merchant_id = MERCHANT
+        integracao.save()
+        with patch.object(ifood_oauth, '_post', return_value={'accessToken': 'tok-p', 'expiresIn': 21600}):
+            self.assertEqual(ifood_oauth.token_valido(self.store), 'tok-p')
+
+    def test_desconectar_esquece_a_loja_e_desliga_as_entregas(self):
+        integracao = ifood_oauth.integracao_da_loja(self.store)
+        integracao.merchant_id = MERCHANT
+        integracao.conectado = True
+        integracao.frete_pelo_ifood = True
+        integracao.chamar_entregador = 'confirmado'
+        integracao.save()
+        ifood_oauth.desconectar(self.store)
+        integracao.refresh_from_db()
+        self.assertEqual(integracao.merchant_id, '')
+        self.assertFalse(integracao.conectado)
+        self.assertFalse(integracao.frete_pelo_ifood)
+        self.assertEqual(integracao.chamar_entregador, 'manual')
+
+
+@override_settings(**CREDENCIAIS)
+class ApiTest(TestCase):
+    def setUp(self):
+        cache.clear()
+
+    def test_401_esquece_o_token_e_tenta_uma_vez(self):
+        class R:
+            def __init__(self, code, body=b'{"ok": 1}'):
+                self.status_code, self.content, self.text = code, body, body.decode()
+
+            def json(self):
+                return {'ok': 1}
+
+        tokens = iter(['velho', 'novo'])
+        with patch.object(ifood_oauth, 'token', side_effect=lambda app, **k: next(tokens)), \
+             patch('requests.request', side_effect=[R(401, b'expired'), R(200)]) as req:
+            self.assertEqual(ifood_oauth.api('entregas', 'GET', '/x'), {'ok': 1})
+        self.assertEqual(req.call_count, 2)
+        self.assertEqual(req.call_args.kwargs['headers']['Authorization'], 'Bearer novo')

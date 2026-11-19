@@ -192,6 +192,11 @@ app.conf.beat_schedule = {
         'task': 'apps.stores.tasks.buscar_pedidos_do_ifood',
         'schedule': 30.0,
     },
+    # iFood Entrega: eventos do entregador (alocado, saiu, código, entregue).
+    'buscar-eventos-entrega-ifood': {
+        'task': 'apps.stores.tasks.buscar_eventos_entrega_ifood',
+        'schedule': 30.0,
+    },
     'conciliar-repasse-da-99': {
         'task': 'apps.stores.tasks.conciliar_repasse_da_99',
         'schedule': crontab(hour=6, minute=0),

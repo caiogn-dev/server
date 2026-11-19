@@ -814,38 +814,65 @@ def conciliar_repasse_da_99(dia: str | None = None):
     return resumo
 
 
-@shared_task(bind=True, max_retries=0, ignore_result=True)
-def cotar_uber_sombra(self, order_id: str, origem: str = 'sombra'):
-    """Cota o pedido no Uber Direct e só GRAVA. Nunca chama entregador.
+@shared_task(bind=True, max_retries=2, default_retry_delay=60, ignore_result=True)
+def chamar_entregador_ifood(self, order_id: str):
+    """iFood Entrega: chama o entregador (disparo automático da loja).
 
-    Um pedido tem no máximo uma cotação de cada origem: retry, aviso duplicado
-    ou rodar o histórico duas vezes não infla a média.
+    Com "ao confirmar", o iFood segura a alocação pelo tempo de preparo da
+    loja (`preparationTime`) para o entregador chegar com o pedido pronto.
+    Recusa do iFood (fora do horário, sem frota...) fica no pedido e aparece
+    no painel; só falha de rede tenta de novo.
     """
-    from apps.stores.models import StoreOrder, UberCotacao
-    from apps.stores.services.delivery_provider.base import DeliveryProviderError
-    from apps.stores.services.delivery_provider.uber_direct import UberDirectProvider, distancia_km
+    from apps.stores.models import StoreOrder
+    from apps.stores.services import entrega_ifood
 
+    order = StoreOrder.objects.select_related('store').filter(id=order_id).first()
+    if order is None or order.status in ('cancelled', 'refunded', 'failed', 'delivered', 'completed'):
+        return
+    integracao = entrega_ifood.integracao_ativa(order.store)
+    if integracao is None:
+        return
+    preparo_s = 0
+    if integracao.chamar_entregador == 'confirmado' and order.status in ('confirmed', 'paid', 'preparing'):
+        preparo_s = integracao.tempo_preparo_min * 60
     try:
-        order = StoreOrder.objects.select_related('store').get(id=order_id)
-    except StoreOrder.DoesNotExist:
-        return
-    if order.delivery_method != 'delivery':
-        return
-    if UberCotacao.objects.filter(order=order, origem=origem).exists():
-        return
+        entrega_ifood.chamar(order, preparo_s=preparo_s)
+    except entrega_ifood.EntregaIfoodRecusada as exc:
+        logger.warning('chamar_entregador_ifood: %s recusado: %s', order.order_number, exc)
+        if 'fora do ar' in str(exc):
+            raise self.retry(exc=exc)
 
-    store = order.store
-    registro = UberCotacao(
-        store=store, order=order, origem=origem, taxa_cobrada=order.delivery_fee,
-        distancia_km=distancia_km(store.latitude, store.longitude, order.delivery_lat, order.delivery_lng),
-    )
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30, ignore_result=True)
+def cancelar_entregador_ifood(self, order_id: str):
+    """Pedido cancelado → cancela a entrega iFood ativa."""
+    from apps.stores.models import StoreOrder
+    from apps.stores.services import entrega_ifood
+
+    order = StoreOrder.objects.select_related('store').filter(id=order_id).first()
+    if order is None or order.external_delivery_status not in entrega_ifood.ATIVOS:
+        return
     try:
-        c = UberDirectProvider().cotar(store, order)
-        registro.quote_id = c['quote_id']
-        registro.fee = c['fee']
-        registro.duracao_min = c['duracao_min']
-        registro.coleta_min = c['coleta_min']
-    except (DeliveryProviderError, requests.RequestException, KeyError, ValueError) as exc:
-        registro.erro = str(exc)[:1000]
-        logger.info('cotar_uber_sombra: pedido %s sem cotação: %s', order.order_number, exc)
-    registro.save()
+        entrega_ifood.cancelar(order, 'Pedido cancelado pela loja')
+    except entrega_ifood.EntregaIfoodRecusada as exc:
+        logger.warning('cancelar_entregador_ifood: %s: %s', order.order_number, exc)
+        if 'fora do ar' in str(exc):
+            raise self.retry(exc=exc)
+
+
+@shared_task(name='apps.stores.tasks.buscar_eventos_entrega_ifood', ignore_result=True)
+def buscar_eventos_entrega_ifood():
+    """Polling (30 s) dos eventos de entrega + reconfere lojas aguardando aprovação (5 min)."""
+    from django.core.cache import cache
+    from apps.stores.models import StoreIfoodIntegration
+    from apps.stores.services import entrega_ifood, ifood_oauth
+
+    if cache.add('ifood:reconferir-lojas', 1, timeout=300):
+        pendentes = StoreIfoodIntegration.objects.filter(conectado=False).exclude(merchant_id='') \
+            .select_related('store')[:50]
+        for integracao in pendentes:
+            try:
+                ifood_oauth.verificar(integracao.store)
+            except Exception:
+                logger.exception('ifood: reconferir %s quebrou', integracao.store.slug)
+    return entrega_ifood.processar_eventos()

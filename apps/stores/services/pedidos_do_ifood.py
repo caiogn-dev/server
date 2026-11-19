@@ -6,9 +6,9 @@ para o iFood pela API.
 
 A diferença é a entrada. A 99 avisa por webhook; o iFood espera POLLING:
 
-- GET /order/v1.0/events:polling a cada 30 s. É também o que mantém a loja
+- GET /events/v1.0/events:polling a cada 30 s. É também o que mantém a loja
   "aberta" no app do iFood — parar o polling fecha a loja lá.
-- ACK em POST /order/v1.0/events/acknowledgment de TODO evento recebido, até
+- ACK em POST /events/v1.0/events/acknowledgment de TODO evento recebido, até
   os que ignoramos; evento sem ACK volta no polling seguinte. Por isso evento
   que FALHOU ao processar fica sem ACK de propósito: é o retry de graça.
 - O evento traz só código + orderId; o pedido inteiro vem de
@@ -16,7 +16,7 @@ A diferença é a entrada. A 99 avisa por webhook; o iFood espera POLLING:
 - Valores em REAIS com casas decimais (a 99 manda centavos).
 - Pedido não confirmado o iFood cancela sozinho: confirmamos logo que entra.
 
-O token é de cada loja (fluxo distribuído, `ifood_oauth.token_valido`).
+Token da plataforma (app centralizado, `ifood_oauth.api('pedidos', ...)`).
 """
 from __future__ import annotations
 
@@ -25,7 +25,6 @@ from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
 from django.utils import timezone
-from requests import RequestException
 
 from . import ifood_oauth
 
@@ -64,26 +63,16 @@ class ErroDoIfood(Exception):
 def _chamar(store, metodo: str, caminho: str, corpo=None, cabecalhos=None):
     """A chamada crua. Isolada para o teste substituir sem tocar em rede.
 
-    Devolve o JSON, ou None quando o iFood responde sem corpo (204/202).
+    App centralizado: o token é o da plataforma (`ifood_oauth.api('pedidos')`);
+    a loja só precisa ter o `merchant_id` informado e o app aprovado no portal.
+    Devolve o JSON, ou None quando o iFood responde sem corpo (202/204).
     """
-    import requests
-
-    token = ifood_oauth.token_valido(store)
-    if not token:
-        raise ErroDoIfood('Loja sem acesso ao iFood (desconectada ou token recusado).')
-    headers = {'Authorization': f'Bearer {token}', **(cabecalhos or {})}
+    if not ifood_oauth.token_valido(store):
+        raise ErroDoIfood('Loja sem acesso ao iFood (sem ID da loja ou app sem credencial).')
     try:
-        resposta = requests.request(metodo, f'{BASE}{caminho}', json=corpo, headers=headers, timeout=TIMEOUT)
-    except RequestException as exc:
-        raise ErroDoIfood(f'iFood fora do ar: {exc}') from exc
-    if resposta.status_code >= 400:
-        raise ErroDoIfood(f'{resposta.status_code}: {resposta.text[:300]}')
-    if resposta.status_code in (202, 204) or not resposta.content:
-        return None
-    try:
-        return resposta.json()
-    except ValueError:
-        return None
+        return ifood_oauth.api('pedidos', metodo, caminho, corpo=corpo, cabecalhos=cabecalhos, timeout=TIMEOUT)
+    except (ifood_oauth.IfoodRecusou, ifood_oauth.IfoodNaoConfigurado) as exc:
+        raise ErroDoIfood(str(exc)) from exc
 
 
 def _integracao(store):
@@ -368,7 +357,7 @@ def processar_eventos_da_loja(store) -> dict:
 
     cabecalhos = {'x-polling-merchants': integracao.merchant_id} if integracao.merchant_id else None
     try:
-        eventos = _chamar(store, 'GET', '/order/v1.0/events:polling', cabecalhos=cabecalhos) or []
+        eventos = _chamar(store, 'GET', '/events/v1.0/events:polling', cabecalhos=cabecalhos) or []
     except ErroDoIfood as exc:
         logger.warning('ifood: polling de %s falhou: %s', store.slug, exc)
         return resultado
@@ -392,7 +381,7 @@ def processar_eventos_da_loja(store) -> dict:
 
     if reconhecer:
         try:
-            _chamar(store, 'POST', '/order/v1.0/events/acknowledgment', corpo=reconhecer)
+            _chamar(store, 'POST', '/events/v1.0/events/acknowledgment', corpo=reconhecer)
         except ErroDoIfood as exc:
             # Sem ACK os eventos voltam; o pedido novo é idempotente pelo order_id.
             logger.warning('ifood: ACK de %s falhou: %s', store.slug, exc)

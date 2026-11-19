@@ -245,6 +245,52 @@ def update_customer_sessions_for_order(sender, instance, **kwargs):
 
 
 @receiver(post_save, sender='stores.StoreOrder')
+def entregador_ifood_pelo_status(sender, instance, created, **kwargs):
+    """iFood Entrega: chama o entregador sozinho e cancela junto com o pedido.
+
+    - "Ao confirmar o pedido" / "Quando ficar pronto" (escolha da loja na aba
+      Integrações) → enfileira `chamar_entregador_ifood` depois do commit.
+    - Pedido cancelado com entrega iFood ativa → cancela a entrega, senão o
+      entregador vai buscar um pedido que não existe (e a loja paga).
+
+    Fica ANTES do receiver da Toca porque aquele faz `pop` do status anterior.
+    """
+    prev_status = _ORDER_PREV_STATUS.get(instance.pk)
+    if prev_status == instance.status and not created:
+        return
+    from apps.stores.services import entrega_ifood
+    order_id = str(instance.id)
+
+    if instance.status == 'cancelled':
+        if instance.external_delivery_provider == entrega_ifood.PROVEDOR \
+                and instance.external_delivery_status in entrega_ifood.ATIVOS:
+            def _cancelar():
+                from apps.stores.tasks import cancelar_entregador_ifood
+                try:
+                    cancelar_entregador_ifood.delay(order_id)
+                except Exception as exc:
+                    logger.warning('entregador_ifood: não enfileirou cancelamento de %s: %s', order_id, exc)
+            transaction.on_commit(_cancelar)
+        return
+
+    try:
+        preparo_s = entrega_ifood.deve_chamar_sozinho(instance, instance.status)
+    except Exception as exc:  # decidir nunca derruba o save do pedido
+        logger.warning('entregador_ifood: não decidiu %s: %s', order_id, exc)
+        return
+    if preparo_s is None:
+        return
+
+    def _chamar():
+        from apps.stores.tasks import chamar_entregador_ifood
+        try:
+            chamar_entregador_ifood.delay(order_id)
+        except Exception as exc:
+            logger.warning('entregador_ifood: não enfileirou %s: %s', order_id, exc)
+    transaction.on_commit(_chamar)
+
+
+@receiver(post_save, sender='stores.StoreOrder')
 def on_order_confirmed_dispatch_toca(sender, instance, created, **kwargs):
     """
     When a delivery order becomes 'confirmed', auto-dispatch to Toca Delivery
@@ -302,28 +348,5 @@ def conferir_endereco_ao_criar_pedido(sender, instance, created, **kwargs):
             # Broker fora do ar não pode derrubar a venda.
             logger.warning('Não consegui conferir o endereço do pedido %s: %s',
                            instance.id, exc)
-
-    transaction.on_commit(_enfileirar)
-
-
-@receiver(post_save, sender='stores.StoreOrder')
-def cotar_uber_em_sombra(sender, instance, created, **kwargs):
-    """Loja com `metadata.uber_sombra` cota cada entrega nova na Uber, sem despachar.
-
-    Serve para medir quanto a Uber cobraria contra o frete cobrado antes de
-    ligar o despacho de verdade. Fila + on_commit: o cliente não espera a Uber.
-    """
-    if not created or instance.delivery_method != 'delivery':
-        return
-    if (getattr(instance.store, 'metadata', None) or {}).get('uber_sombra') is not True:
-        return
-    order_id = str(instance.id)
-
-    def _enfileirar():
-        from apps.stores.tasks import cotar_uber_sombra
-        try:
-            cotar_uber_sombra.delay(order_id)
-        except Exception as exc:
-            logger.warning('cotar_uber_em_sombra: não enfileirou %s: %s', order_id, exc)
 
     transaction.on_commit(_enfileirar)

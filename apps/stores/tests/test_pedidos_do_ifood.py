@@ -3,9 +3,9 @@
 Contrato da Merchant API do iFood (módulo Order v1.0):
 
 - não há webhook obrigatório: a loja faz POLLING em
-  GET /order/v1.0/events:polling a cada 30 s (é isso que mantém a loja
+  GET /events/v1.0/events:polling a cada 30 s (é isso que mantém a loja
   "aberta" no app do iFood) e precisa dar ACK em
-  POST /order/v1.0/events/acknowledgment em todo evento que recebeu, senão ele
+  POST /events/v1.0/events/acknowledgment em todo evento que recebeu, senão ele
   volta no próximo polling;
 - o evento traz só o código (PLC, CFM, CAN, CON...) e o orderId; o pedido
   inteiro vem de GET /order/v1.0/orders/{id};
@@ -181,7 +181,7 @@ class PedidosDoIfoodTest(TestCase):
             {'id': 'ev2', 'code': 'XYZ', 'fullCode': 'ALGO_QUE_NAO_USAMOS', 'orderId': PEDIDO},
         ]
         respostas = {
-            ('GET', '/order/v1.0/events:polling'): eventos,
+            ('GET', '/events/v1.0/events:polling'): eventos,
             ('GET', f'/order/v1.0/orders/{PEDIDO}'): _pedido(),
         }
         with self._api(respostas), mock.patch.object(pif, 'imprimir_depois'), \
@@ -190,7 +190,7 @@ class PedidosDoIfoodTest(TestCase):
 
         self.assertEqual(resultado['pedidos_novos'], 1)
         self.assertTrue(StoreOrder.objects.filter(source='ifood').exists())
-        ack = [c for c in self.chamadas if c[1] == '/order/v1.0/events/acknowledgment']
+        ack = [c for c in self.chamadas if c[1] == '/events/v1.0/events/acknowledgment']
         self.assertEqual(len(ack), 1)
         self.assertEqual(sorted(e['id'] for e in ack[0][2]), ['ev1', 'ev2'])
         polling = self.chamadas[0]
@@ -199,15 +199,15 @@ class PedidosDoIfoodTest(TestCase):
     def test_evento_que_falhou_nao_recebe_ack_para_voltar_no_proximo_polling(self):
         eventos = [{'id': 'ev1', 'code': 'PLC', 'orderId': PEDIDO}]
         respostas = {
-            ('GET', '/order/v1.0/events:polling'): eventos,
+            ('GET', '/events/v1.0/events:polling'): eventos,
             ('GET', f'/order/v1.0/orders/{PEDIDO}'): pif.ErroDoIfood('503'),
         }
         with self._api(respostas):
             pif.processar_eventos_da_loja(self.store)
-        self.assertFalse([c for c in self.chamadas if c[1] == '/order/v1.0/events/acknowledgment'])
+        self.assertFalse([c for c in self.chamadas if c[1] == '/events/v1.0/events/acknowledgment'])
 
     def test_sem_eventos_nao_chama_ack(self):
-        with self._api({('GET', '/order/v1.0/events:polling'): None}):
+        with self._api({('GET', '/events/v1.0/events:polling'): None}):
             resultado = pif.processar_eventos_da_loja(self.store)
         self.assertEqual(resultado['eventos'], 0)
         self.assertEqual(len(self.chamadas), 1)
@@ -347,53 +347,68 @@ class VinculoPeloPainelTest(TestCase):
         self.client = APIClient()
         self.client.force_authenticate(self.dono)
 
-    def test_iniciar_devolve_codigo_e_endereco_do_portal(self):
-        with mock.patch('apps.stores.services.ifood_oauth._post', return_value={
-            'userCode': 'ABCD-1234', 'authorizationCodeVerifier': 'v',
-            'verificationUrlComplete': 'https://portal.ifood.com.br/apps/code?c=ABCD-1234',
-            'verificationUrl': 'https://portal.ifood.com.br/apps/code', 'expiresIn': 600,
-        }):
-            r = self.client.post(f'/api/v1/stores/integracoes/ifood/iniciar/?store={self.store.slug}')
-        self.assertEqual(r.status_code, 200, r.content)
-        self.assertEqual(r.json()['user_code'], 'ABCD-1234')
-        self.assertIn('portal.ifood.com.br', r.json()['url'])
+    MERCHANT = '00f0d5a7-6142-4120-b34d-1b1d36cdecec'
 
-    def test_concluir_guarda_tokens_e_descobre_a_loja_no_ifood(self):
-        integ = StoreIfoodIntegration.objects.create(store=self.store, authorization_code_verifier='v')
-        with mock.patch('apps.stores.services.ifood_oauth._post', return_value={
-            'accessToken': 'acc', 'refreshToken': 'ref', 'expiresIn': 21600,
-        }), mock.patch.object(pif, '_chamar', return_value=[{'id': 'm-9', 'name': 'Loja V Palmas'}]):
-            r = self.client.post(f'/api/v1/stores/integracoes/ifood/concluir/?store={self.store.slug}',
-                                 {'authorization_code': 'XYZ'}, format='json')
-        self.assertEqual(r.status_code, 200, r.content)
-        integ.refresh_from_db()
-        self.assertTrue(integ.conectado)
-        self.assertEqual(integ.merchant_id, 'm-9')
-        self.assertEqual(integ.merchant_name, 'Loja V Palmas')
+    def _url(self, sufixo=''):
+        return f'/api/v1/stores/integracoes/ifood/{sufixo}?store={self.store.slug}'
 
-    def test_concluir_recusado_mostra_o_motivo(self):
-        StoreIfoodIntegration.objects.create(store=self.store, authorization_code_verifier='v')
-        from apps.stores.services.ifood_oauth import IfoodRecusou
-        with mock.patch('apps.stores.services.ifood_oauth._post', side_effect=IfoodRecusou('401: código inválido')):
-            r = self.client.post(f'/api/v1/stores/integracoes/ifood/concluir/?store={self.store.slug}',
-                                 {'authorization_code': 'ERRADO'}, format='json')
+    def test_informar_o_id_confere_o_acesso_e_mostra_a_loja(self):
+        with mock.patch('apps.stores.services.ifood_oauth.api',
+                        return_value={'id': self.MERCHANT, 'name': 'Loja V Palmas'}):
+            r = self.client.post(self._url(), {'merchant_id': self.MERCHANT}, format='json')
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json()['merchant_id'], self.MERCHANT)
+        self.assertTrue(r.json()['conectado'])
+        self.assertEqual(r.json()['loja'], 'Loja V Palmas')
+
+    def test_id_invalido_volta_400(self):
+        r = self.client.post(self._url(), {'merchant_id': '4327433'}, format='json')
         self.assertEqual(r.status_code, 400)
-        self.assertIn('código inválido', r.json()['detail'])
+        self.assertIn('inválido', r.json()['detail'])
 
-    def test_desconectar_apaga_tokens(self):
-        StoreIfoodIntegration.objects.create(store=self.store, conectado=True, access_token='a',
-                                             refresh_token='r', merchant_id='m')
-        r = self.client.post(f'/api/v1/stores/integracoes/ifood/desconectar/?store={self.store.slug}')
+    def test_loja_sem_aprovacao_fica_aguardando_com_o_motivo(self):
+        from apps.stores.services.ifood_oauth import IfoodRecusou
+        with mock.patch('apps.stores.services.ifood_oauth.api', side_effect=IfoodRecusou('403: x', 403)):
+            r = self.client.post(self._url(), {'merchant_id': self.MERCHANT}, format='json')
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(r.json()['conectado'])
+        self.assertIn('Portal do Parceiro', r.json()['erro'])
+
+    def test_configura_as_entregas(self):
+        StoreIfoodIntegration.objects.create(store=self.store, merchant_id=self.MERCHANT, conectado=True)
+        r = self.client.post(self._url(), {
+            'frete_pelo_ifood': True, 'acrescimo_frete': '1.50',
+            'chamar_entregador': 'confirmado', 'tempo_preparo_min': 20,
+        }, format='json')
+        self.assertEqual(r.status_code, 200, r.content)
+        integ = StoreIfoodIntegration.objects.get(store=self.store)
+        self.assertTrue(integ.frete_pelo_ifood)
+        self.assertEqual(str(integ.acrescimo_frete), '1.50')
+        self.assertEqual(integ.chamar_entregador, 'confirmado')
+        self.assertEqual(integ.tempo_preparo_min, 20)
+        self.assertEqual(r.json()['acrescimo_frete'], '1.50')
+
+    def test_opcao_invalida_de_chamar_entregador_volta_400(self):
+        StoreIfoodIntegration.objects.create(store=self.store, merchant_id=self.MERCHANT)
+        r = self.client.post(self._url(), {'chamar_entregador': 'sempre'}, format='json')
+        self.assertEqual(r.status_code, 400)
+
+    def test_estado_lista_tudo_que_o_painel_usa(self):
+        r = self.client.get(f'/api/v1/stores/integracoes/?store={self.store.slug}')
+        ifood = r.json()['ifood']
+        for chave in ('disponivel', 'entregas_disponivel', 'merchant_id', 'conectado', 'loja', 'erro',
+                      'frete_pelo_ifood', 'acrescimo_frete', 'chamar_entregador', 'tempo_preparo_min'):
+            self.assertIn(chave, ifood)
+
+    def test_desconectar_esquece_a_loja(self):
+        StoreIfoodIntegration.objects.create(store=self.store, conectado=True, merchant_id=self.MERCHANT,
+                                             frete_pelo_ifood=True)
+        r = self.client.post(self._url('desconectar/'))
         self.assertEqual(r.status_code, 200)
         integ = StoreIfoodIntegration.objects.get(store=self.store)
         self.assertFalse(integ.conectado)
-        self.assertEqual(integ.access_token, '')
-        self.assertEqual(integ.refresh_token, '')
-
-    @override_settings(IFOOD_CLIENT_ID='', IFOOD_CLIENT_SECRET='')
-    def test_sem_app_configurado_responde_indisponivel(self):
-        r = self.client.post(f'/api/v1/stores/integracoes/ifood/iniciar/?store={self.store.slug}')
-        self.assertEqual(r.status_code, 503)
+        self.assertEqual(integ.merchant_id, '')
+        self.assertFalse(integ.frete_pelo_ifood)
 
     def test_loja_de_outro_dono_nao_conecta(self):
         intruso = User.objects.create_user(username='intruso-ifood', password='x')
