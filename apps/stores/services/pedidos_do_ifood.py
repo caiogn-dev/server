@@ -43,6 +43,8 @@ DESPACHADO = 'DSP'
 PRONTO = 'RTP'
 CANCELAMENTO_PEDIDO = 'CAR'
 CANCELAMENTO_NEGADO = 'CARF'
+NEGOCIACAO = 'HSD'
+NEGOCIACAO_RESOLVIDA = 'HSS'
 
 # Motivo que o dono escolhe no painel → trecho da descrição do iFood.
 _MOTIVOS = (
@@ -173,6 +175,39 @@ def _descontos(beneficios) -> tuple[Decimal, Decimal]:
     return total, min(do_ifood, total)
 
 
+def _brl(valor: Decimal) -> str:
+    return f'R$ {valor:,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.')
+
+
+_METODOS = {'CREDIT': 'Crédito', 'DEBIT': 'Débito', 'MEAL_VOUCHER': 'Vale-refeição',
+            'FOOD_VOUCHER': 'Vale-alimentação', 'PIX': 'PIX', 'CASH': 'Dinheiro',
+            'DIGITAL_WALLET': 'Carteira digital'}
+
+
+def _notas_de_pagamento(metodos, troco, beneficios, totais) -> list:
+    notas = []
+    for m in metodos or []:
+        nome = _METODOS.get(str(m.get('method') or '').upper(), str(m.get('method') or '').title())
+        bandeira = str((m.get('card') or {}).get('brand') or (m.get('wallet') or {}).get('name') or '').strip()
+        quando = 'pago online' if str(m.get('type') or '').upper() == 'ONLINE' else 'cobrar na entrega'
+        linha = f"{nome}{' ' + bandeira if bandeira else ''} ({quando}) {_brl(_reais(m.get('value')))}"
+        if str(m.get('method') or '').upper() == 'CASH' and troco:
+            falta = troco - _reais(m.get('value'))
+            if falta > 0:
+                linha += f' — troco de {_brl(falta)} (para {_brl(troco)})'
+        notas.append(linha)
+    for beneficio in beneficios or []:
+        partes = []
+        for patrocinio in beneficio.get('sponsorshipValues') or []:
+            valor = _reais(patrocinio.get('value'))
+            if valor <= 0:
+                continue
+            quem = 'iFood' if str(patrocinio.get('name') or '').upper() == 'IFOOD' else 'loja'
+            partes.append(f'{quem} {_brl(valor)}')
+        notas.append(f"Cupom {_brl(_reais(beneficio.get('value')))}" + (f" ({' · '.join(partes)})" if partes else ''))
+    return notas
+
+
 def receber_pedido_novo(store, dados: dict):
     """Cria o pedido a partir do detalhe do iFood. Repetido devolve o mesmo."""
     from apps.stores.models import StoreOrder, StoreOrderItem
@@ -221,6 +256,12 @@ def receber_pedido_novo(store, dados: dict):
             troco_para = (dinheiro.get('cash') or {}).get('changeFor')
             troco = _reais(troco_para) if troco_para else None
 
+        # Critérios do iFood: bandeira, troco, cupom (quem paga) e CPF/CNPJ na comanda.
+        notas.extend(_notas_de_pagamento(metodos, troco, dados.get('benefits'), totais))
+        documento = str(cliente.get('documentNumber') or '').strip()
+        if documento:
+            notas.append(f'CPF/CNPJ na nota: {documento}')
+
         pedido = StoreOrder.objects.create(
             store=store,
             customer_name=(str(cliente.get('name') or '').strip() or 'Cliente iFood')[:255],
@@ -254,6 +295,8 @@ def receber_pedido_novo(store, dados: dict):
                     'quem_entrega': 'entregador do iFood' if entrega_do_ifood else (
                         'cliente retira' if retirada else 'entrega da loja'),
                     'codigo_coleta': str(entrega.get('pickupCode') or ''),
+                    'documento': documento,
+                    'entrega_do_ifood': entrega_do_ifood,
                     'merchant_id': str((dados.get('merchant') or {}).get('id') or ''),
                     'confirmado': False,
                     'financeiro': {
@@ -341,6 +384,30 @@ def aplicar_evento(store, evento: dict) -> bool:
         _registrar(pedido, pedido_do_cliente={'tipo': 'cancelamento', 'em': agora.isoformat()})
     elif codigo == CANCELAMENTO_NEGADO:
         _registrar(pedido, ultimo_erro='O iFood negou o cancelamento pedido pela loja.')
+    elif codigo == NEGOCIACAO:
+        disputa = evento.get('metadata') if isinstance(evento.get('metadata'), dict) else {}
+        _registrar(pedido, disputa={
+            'id': str(disputa.get('id') or ''),
+            'status': 'ABERTA',
+            'acao': str(disputa.get('action') or ''),
+            'tipo': str(disputa.get('handshakeType') or ''),
+            'mensagem': str(disputa.get('message') or ''),
+            'expira_em': str(disputa.get('expiresAt') or ''),
+            'se_nao_responder': str(disputa.get('timeoutAction') or ''),
+            'motivos_aceite': list(disputa.get('acceptCancellationReasons') or []),
+            'alternativas': list(disputa.get('alternatives') or []),
+            'itens': list((disputa.get('metadata') or {}).get('items') or disputa.get('items') or []),
+            'evidencias': [e.get('url') for e in (disputa.get('evidences') or []) if isinstance(e, dict)],
+            'recebida_em': agora.isoformat(),
+        })
+    elif codigo == NEGOCIACAO_RESOLVIDA:
+        resultado = evento.get('metadata') if isinstance(evento.get('metadata'), dict) else {}
+        disputa = dict(dados_ifood(pedido).get('disputa') or {})
+        if not disputa.get('id') or disputa.get('id') == resultado.get('disputeId'):
+            disputa.update({'status': str(resultado.get('status') or 'RESOLVIDA'),
+                            'resultado_motivo': str(resultado.get('reason') or ''),
+                            'resolvida_em': agora.isoformat()})
+            _registrar(pedido, disputa=disputa)
     else:
         return False
     from apps.stores.services import realtime_service
@@ -442,20 +509,93 @@ def avisar_status(pedido, novo_status: str, motivo: str = ''):
         _executar(pedido, 'startPreparation')
     elif novo_status == 'ready':
         confirmar(pedido)
-        if retirada:
-            _executar(pedido, 'readyToPickup')
+        _avisar_pronto(pedido)
     elif novo_status in ('out_for_delivery', 'shipped'):
         confirmar(pedido)
-        if not retirada:
+        # Entrega própria: o iFood exige "pronto" ANTES do despacho. Com o
+        # entregador do iFood quem despacha é ele; a loja não manda dispatch.
+        if not retirada and not dados.get('entrega_do_ifood', pedido.external_delivery_provider == PROVEDOR):
+            _avisar_pronto(pedido)
             _executar(pedido, 'dispatch')
     elif novo_status == 'cancelled':
-        if dados.get('cancelado_no_ifood'):
+        if dados.get('cancelado_no_ifood') or dados.get('cancelamento_solicitado'):
             return
         codigo, descricao = _codigo_de_cancelamento(pedido, motivo)
         _executar(pedido, 'requestCancellation', corpo={
             'reason': (motivo or descricao or 'Cancelado pela loja')[:250],
             'cancellationCode': codigo,
         })
+
+
+def _avisar_pronto(pedido):
+    if dados_ifood(pedido).get('pronto_avisado'):
+        return
+    _executar(pedido, 'readyToPickup')
+    _registrar(pedido, pronto_avisado=True)
+
+
+def motivos_de_cancelamento(pedido) -> list:
+    """Os motivos que o iFood aceita para ESTE pedido (o painel mostra ao lojista)."""
+    order_id = dados_ifood(pedido).get('order_id')
+    opcoes = _chamar(pedido.store, 'GET', f'/order/v1.0/orders/{order_id}/cancellationReasons') or []
+    return [{'codigo': str(o.get('cancelCodeId')), 'descricao': str(o.get('description') or '')}
+            for o in opcoes if isinstance(o, dict) and o.get('cancelCodeId') is not None]
+
+
+def cancelar_no_ifood(pedido, codigo: str, detalhe: str = ''):
+    """Cancela com o motivo que o lojista escolheu entre os do iFood."""
+    motivos = {m['codigo']: m['descricao'] for m in motivos_de_cancelamento(pedido)}
+    codigo = str(codigo or '')
+    if codigo not in motivos:
+        raise ErroDoIfood('Escolha um dos motivos do iFood.')
+    _executar(pedido, 'requestCancellation', corpo={
+        'reason': (detalhe or motivos[codigo])[:250], 'cancellationCode': codigo,
+    })
+    _registrar(pedido, cancelamento_solicitado=codigo)
+    if pedido.status != 'cancelled':
+        from apps.stores.services.order_service import OrderService
+        OrderService().update_status(pedido, 'cancelled', notify_customer=False, motivo=motivos[codigo])
+    return pedido
+
+
+#: Respostas da Plataforma de Negociação → endpoint.
+_RESPOSTAS = {'aceitar': 'accept', 'recusar': 'reject', 'alternativa': 'alternative'}
+
+
+def responder_disputa(pedido, resposta: str, motivo: str = '', detalhe: str = '',
+                      tipo: str = '', valor_centavos: int | None = None, minutos: int | None = None):
+    disputa = dict(dados_ifood(pedido).get('disputa') or {})
+    if not disputa.get('id') or disputa.get('status') != 'ABERTA':
+        raise ErroDoIfood('Não há negociação aberta neste pedido.')
+    if resposta not in _RESPOSTAS:
+        raise ErroDoIfood('Resposta inválida.')
+    if resposta == 'aceitar':
+        corpo = {'reason': motivo or (disputa.get('motivos_aceite') or ['CUSTOMER_SATISFACTION'])[0]}
+        if detalhe:
+            corpo['detailReason'] = detalhe[:250]
+    elif resposta == 'recusar':
+        corpo = {'reason': motivo or 'UNKNOWN_ISSUE'}
+    else:
+        tipo = (tipo or '').upper()
+        if tipo in ('REFUND', 'BENEFIT'):
+            if not valor_centavos or int(valor_centavos) <= 0:
+                raise ErroDoIfood('Informe o valor da contraproposta.')
+            corpo = {'type': tipo, 'metadata': {'amount': {'value': str(int(valor_centavos)), 'currency': 'BRL'}}}
+        elif tipo == 'ADDITIONAL_TIME':
+            if not minutos or int(minutos) <= 0:
+                raise ErroDoIfood('Informe os minutos a mais.')
+            corpo = {'type': tipo, 'metadata': {'additionalTimeInMinutes': int(minutos),
+                                                'reason': motivo or 'HIGH_STORE_DEMAND'}}
+        else:
+            raise ErroDoIfood('Tipo de contraproposta inválido.')
+    try:
+        _chamar(pedido.store, 'POST', f"/order/v1.0/disputes/{disputa['id']}/{_RESPOSTAS[resposta]}", corpo=corpo)
+    except ErroDoIfood as exc:
+        _registrar(pedido, ultimo_erro=f'negociação: {exc}'[:500])
+        raise
+    disputa.update({'status': 'RESPONDIDA', 'resposta': resposta, 'respondida_em': timezone.now().isoformat()})
+    _registrar(pedido, disputa=disputa, ultimo_erro='')
+    return pedido
 
 
 # ── Fila (Celery) ─────────────────────────────────────────────────────────

@@ -256,7 +256,7 @@ class PedidosDoIfoodTest(TestCase):
         self.assertTrue(any(c[1].endswith('/readyToPickup') for c in self.chamadas))
 
     def test_saiu_para_entrega_avisa_dispatch(self):
-        pedido = self._pedido_salvo()
+        pedido = self._pedido_salvo(delivery=dict(_pedido()['delivery'], deliveredBy='MERCHANT'))
         with self._api({}):
             pif.avisar_status(pedido, 'out_for_delivery')
         self.assertTrue(any(c[1].endswith('/dispatch') for c in self.chamadas))
@@ -270,6 +270,112 @@ class PedidosDoIfoodTest(TestCase):
         pedido_cancelamento = [c for c in self.chamadas if c[1].endswith('/requestCancellation')]
         self.assertEqual(len(pedido_cancelamento), 1)
         self.assertEqual(pedido_cancelamento[0][2]['cancellationCode'], '503')
+
+    # ── critérios de homologação do Order ────────────────────────────────
+
+    def test_entrega_propria_avisa_pronto_antes_de_despachar(self):
+        pedido = self._pedido_salvo(delivery=dict(_pedido()['delivery'], deliveredBy='MERCHANT'))
+        with self._api({}):
+            pif.avisar_status(pedido, 'out_for_delivery')
+        acoes = [c[1].rsplit('/', 1)[-1] for c in self.chamadas if c[0] == 'POST']
+        self.assertLess(acoes.index('readyToPickup'), acoes.index('dispatch'))
+
+    def test_pronto_tambem_avisa_na_entrega(self):
+        pedido = self._pedido_salvo(delivery=dict(_pedido()['delivery'], deliveredBy='MERCHANT'))
+        with self._api({}):
+            pif.avisar_status(pedido, 'ready')
+            pif.avisar_status(pedido, 'out_for_delivery')
+        prontos = [c for c in self.chamadas if c[1].endswith('/readyToPickup')]
+        self.assertEqual(len(prontos), 1)  # não repete no despacho
+
+    def test_entregador_do_ifood_nao_recebe_dispatch_da_loja(self):
+        pedido = self._pedido_salvo()  # deliveredBy IFOOD
+        with self._api({}):
+            pif.avisar_status(pedido, 'out_for_delivery')
+        self.assertFalse(any(c[1].endswith('/dispatch') for c in self.chamadas))
+
+    def test_comanda_mostra_bandeira_documento_e_quem_paga_o_cupom(self):
+        pedido = self._pedido_salvo(
+            customer=dict(_pedido()['customer'], documentNumber='12345678909'),
+            payments={'prepaid': 62.8, 'pending': 0, 'methods': [
+                {'value': 62.8, 'currency': 'BRL', 'method': 'CREDIT', 'type': 'ONLINE',
+                 'card': {'brand': 'VISA'}}]},
+        )
+        notas = pedido.delivery_notes
+        self.assertIn('VISA', notas)
+        self.assertIn('CPF/CNPJ na nota: 12345678909', notas)
+        self.assertIn('iFood R$ 6,00', notas)
+        self.assertIn('loja R$ 4,00', notas)
+        self.assertEqual(pedido.metadata['ifood']['documento'], '12345678909')
+
+    def test_troco_aparece_na_comanda(self):
+        pedido = self._pedido_salvo(payments={'prepaid': 0, 'pending': 62.8, 'methods': [
+            {'value': 62.8, 'method': 'CASH', 'type': 'OFFLINE', 'cash': {'changeFor': 100}}]})
+        self.assertIn('troco de R$ 37,20', pedido.delivery_notes)
+
+    def test_negociacao_fica_no_pedido_para_a_loja_responder(self):
+        pedido = self._pedido_salvo()
+        evento = {'id': 'e-hsd', 'code': 'HSD', 'fullCode': 'HANDSHAKE_DISPUTE', 'orderId': PEDIDO,
+                  'metadata': {'id': 'd-1', 'action': 'CANCELLATION', 'handshakeType': 'AFTER_DELIVERY',
+                               'message': 'Comida chegou fria', 'expiresAt': '2099-01-01T00:00:00Z',
+                               'timeoutAction': 'REJECT_CANCELLATION',
+                               'acceptCancellationReasons': ['PRODUCT_QUALITY'],
+                               'alternatives': [{'id': 'alt-1', 'type': 'REFUND',
+                                                 'metadata': {'maxAmount': {'value': '5000', 'currency': 'BRL'}}}]}}
+        self.assertTrue(pif.aplicar_evento(self.store, evento))
+        pedido.refresh_from_db()
+        disputa = pedido.metadata['ifood']['disputa']
+        self.assertEqual(disputa['id'], 'd-1')
+        self.assertEqual(disputa['mensagem'], 'Comida chegou fria')
+        self.assertEqual(disputa['status'], 'ABERTA')
+
+    def test_responder_negociacao(self):
+        pedido = self._pedido_salvo()
+        pif._registrar(pedido, disputa={'id': 'd-1', 'status': 'ABERTA', 'motivos_aceite': ['PRODUCT_QUALITY']})
+        with self._api({}):
+            pif.responder_disputa(pedido, 'aceitar')
+        self.assertEqual(self.chamadas[-1][1], '/order/v1.0/disputes/d-1/accept')
+        self.assertEqual(self.chamadas[-1][2]['reason'], 'PRODUCT_QUALITY')
+        pedido.refresh_from_db()
+        self.assertEqual(pedido.metadata['ifood']['disputa']['status'], 'RESPONDIDA')
+
+    def test_recusar_e_contrapropor(self):
+        pedido = self._pedido_salvo()
+        pif._registrar(pedido, disputa={'id': 'd-2', 'status': 'ABERTA'})
+        with self._api({}):
+            pif.responder_disputa(pedido, 'recusar', motivo='INVENTORY_CHECK')
+        self.assertEqual(self.chamadas[-1][1:], ('/order/v1.0/disputes/d-2/reject', {'reason': 'INVENTORY_CHECK'}, None))
+        pif._registrar(pedido, disputa={'id': 'd-3', 'status': 'ABERTA'})
+        with self._api({}):
+            pif.responder_disputa(pedido, 'alternativa', tipo='REFUND', valor_centavos=1500)
+        self.assertEqual(self.chamadas[-1][2], {'type': 'REFUND', 'metadata': {'amount': {'value': '1500', 'currency': 'BRL'}}})
+
+    def test_resultado_da_negociacao_fecha_a_disputa(self):
+        pedido = self._pedido_salvo()
+        pif._registrar(pedido, disputa={'id': 'd-1', 'status': 'RESPONDIDA'})
+        pif.aplicar_evento(self.store, {'id': 'e-hss', 'code': 'HSS', 'orderId': PEDIDO,
+                                        'metadata': {'disputeId': 'd-1', 'status': 'EXPIRED'}})
+        pedido.refresh_from_db()
+        self.assertEqual(pedido.metadata['ifood']['disputa']['status'], 'EXPIRED')
+
+    def test_cancelar_com_o_motivo_escolhido_do_ifood(self):
+        pedido = self._pedido_salvo()
+        motivos = [{'cancelCodeId': '501', 'description': 'Problemas de sistema'},
+                   {'cancelCodeId': '503', 'description': 'Item indisponível'}]
+        with self._api({('GET', f'/order/v1.0/orders/{PEDIDO}/cancellationReasons'): motivos}):
+            self.assertEqual(pif.motivos_de_cancelamento(pedido),
+                             [{'codigo': '501', 'descricao': 'Problemas de sistema'},
+                              {'codigo': '503', 'descricao': 'Item indisponível'}])
+            pif.cancelar_no_ifood(pedido, '501')
+        corpo = [c for c in self.chamadas if c[1].endswith('/requestCancellation')][0][2]
+        self.assertEqual(corpo['cancellationCode'], '501')
+        pedido.refresh_from_db()
+        self.assertEqual(pedido.status, StoreOrder.OrderStatus.CANCELLED)
+        # o aviso automático de status não pede cancelamento de novo
+        self.chamadas = []
+        with self._api({}):
+            pif.avisar_status(pedido, 'cancelled', 'x')
+        self.assertFalse(any(c[1].endswith('/requestCancellation') for c in self.chamadas))
 
     def test_falha_do_ifood_fica_registrada_no_pedido(self):
         pedido = self._pedido_salvo()
@@ -415,4 +521,41 @@ class VinculoPeloPainelTest(TestCase):
         c = APIClient()
         c.force_authenticate(intruso)
         r = c.post(f'/api/v1/stores/integracoes/ifood/desconectar/?store={self.store.slug}')
+        self.assertEqual(r.status_code, 404)
+
+
+@override_settings(**CREDENCIAIS)
+class PainelDoPedidoIfoodTest(TestCase):
+    def setUp(self):
+        self.dono = User.objects.create_user(username='dono-painel-ifood', password='x')
+        self.store = Store.objects.create(billing_exempt=True, name='P', slug='p-ifood', owner=self.dono,
+                                          store_type='food', status='active')
+        StoreIfoodIntegration.objects.create(store=self.store, conectado=True, merchant_id='merchant-1')
+        with mock.patch.object(pif, 'imprimir_depois'), mock.patch.object(pif, 'confirmar_depois'):
+            self.pedido, _ = pif.receber_pedido_novo(self.store, _pedido())
+        self.client = APIClient()
+        self.client.force_authenticate(self.dono)
+        self.base = f'/api/v1/stores/orders/{self.pedido.id}/ifood/'
+
+    def test_motivos(self):
+        with mock.patch.object(pif, 'motivos_de_cancelamento', return_value=[{'codigo': '501', 'descricao': 'X'}]):
+            r = self.client.get(self.base + 'motivos-cancelamento/')
+        self.assertEqual(r.json(), {'motivos': [{'codigo': '501', 'descricao': 'X'}]})
+
+    def test_cancelar(self):
+        with mock.patch.object(pif, 'cancelar_no_ifood') as cancelar:
+            r = self.client.post(self.base + 'cancelar/', {'codigo': '501'}, format='json')
+        self.assertEqual(r.status_code, 200, r.content)
+        cancelar.assert_called_once()
+
+    def test_negociacao(self):
+        pif._registrar(self.pedido, disputa={'id': 'd-1', 'status': 'ABERTA'})
+        self.assertEqual(self.client.get(self.base + 'negociacao/').json()['disputa']['id'], 'd-1')
+        with mock.patch.object(pif, 'responder_disputa', side_effect=pif.ErroDoIfood('já respondida')):
+            r = self.client.post(self.base + 'negociacao/', {'resposta': 'aceitar'}, format='json')
+        self.assertEqual(r.status_code, 400)
+
+    def test_pedido_que_nao_e_do_ifood_da_404(self):
+        outro = StoreOrder.objects.create(store=self.store, customer_name='X', subtotal=1, total=1)
+        r = self.client.get(f'/api/v1/stores/orders/{outro.id}/ifood/negociacao/')
         self.assertEqual(r.status_code, 404)

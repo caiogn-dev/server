@@ -52,3 +52,72 @@ class EntregaIfoodCancelarView(APIView):
             return Response({'detail': str(exc)}, status=400)
         pedido.refresh_from_db()
         return Response(entrega_ifood.estado(pedido))
+
+
+# ── Pedido QUE VEIO do iFood: cancelar com motivo do iFood e negociação ──
+
+def _pedido_do_ifood(request, order_id):
+    from ..services import pedidos_do_ifood
+    pedido = _pedido(request, order_id)
+    if pedido is None or pedido.source != pedidos_do_ifood.PROVEDOR:
+        return None
+    return pedido
+
+
+class PedidoIfoodMotivosView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, order_id):
+        from ..services import pedidos_do_ifood
+        pedido = _pedido_do_ifood(request, order_id)
+        if pedido is None:
+            return Response({'detail': 'Pedido do iFood não encontrado.'}, status=404)
+        try:
+            return Response({'motivos': pedidos_do_ifood.motivos_de_cancelamento(pedido)})
+        except pedidos_do_ifood.ErroDoIfood as exc:
+            return Response({'detail': str(exc)}, status=400)
+
+
+class PedidoIfoodCancelarView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, order_id):
+        from ..services import pedidos_do_ifood
+        pedido = _pedido_do_ifood(request, order_id)
+        if pedido is None:
+            return Response({'detail': 'Pedido do iFood não encontrado.'}, status=404)
+        dados = request.data or {}
+        try:
+            pedidos_do_ifood.cancelar_no_ifood(pedido, str(dados.get('codigo') or ''), str(dados.get('detalhe') or ''))
+        except pedidos_do_ifood.ErroDoIfood as exc:
+            return Response({'detail': str(exc)}, status=400)
+        pedido.refresh_from_db()
+        return Response({'status': pedido.status, 'ifood': pedidos_do_ifood.dados_ifood(pedido)})
+
+
+class PedidoIfoodNegociacaoView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, order_id):
+        from ..services import pedidos_do_ifood
+        pedido = _pedido_do_ifood(request, order_id)
+        if pedido is None:
+            return Response({'detail': 'Pedido do iFood não encontrado.'}, status=404)
+        return Response({'disputa': pedidos_do_ifood.dados_ifood(pedido).get('disputa')})
+
+    def post(self, request, order_id):
+        from ..services import pedidos_do_ifood
+        pedido = _pedido_do_ifood(request, order_id)
+        if pedido is None:
+            return Response({'detail': 'Pedido do iFood não encontrado.'}, status=404)
+        d = request.data or {}
+        try:
+            pedidos_do_ifood.responder_disputa(
+                pedido, str(d.get('resposta') or ''), motivo=str(d.get('motivo') or ''),
+                detalhe=str(d.get('detalhe') or ''), tipo=str(d.get('tipo') or ''),
+                valor_centavos=d.get('valor_centavos'), minutos=d.get('minutos'),
+            )
+        except (pedidos_do_ifood.ErroDoIfood, ValueError, TypeError) as exc:
+            return Response({'detail': str(exc)}, status=400)
+        pedido.refresh_from_db()
+        return Response({'disputa': pedidos_do_ifood.dados_ifood(pedido).get('disputa')})

@@ -218,6 +218,7 @@ from .api.analytics_views import (
 from .api.repasse_99_views import ImportarExtrato99View
 from .api.entrega_ifood_views import (
     EntregaIfoodCancelarView, EntregaIfoodChamarView, EntregaIfoodView,
+    PedidoIfoodCancelarView, PedidoIfoodMotivosView, PedidoIfoodNegociacaoView,
 )
 from .api.integracoes_views import (
     IfoodConfigView, IfoodDesconectarView, IntegracoesDaLojaView, LojaNoIfoodHorariosView,
@@ -462,6 +463,11 @@ urlpatterns = [
 
     # WhatsApp confirmation link
     path('orders/<uuid:order_id>/entrega-ifood/', EntregaIfoodView.as_view(), name='entrega-ifood'),
+    path('orders/<uuid:order_id>/ifood/motivos-cancelamento/', PedidoIfoodMotivosView.as_view(),
+         name='pedido-ifood-motivos'),
+    path('orders/<uuid:order_id>/ifood/cancelar/', PedidoIfoodCancelarView.as_view(), name='pedido-ifood-cancelar'),
+    path('orders/<uuid:order_id>/ifood/negociacao/', PedidoIfoodNegociacaoView.as_view(),
+         name='pedido-ifood-negociacao'),
     path('orders/<uuid:order_id>/entrega-ifood/chamar/', EntregaIfoodChamarView.as_view(), name='entrega-ifood-chamar'),
     path('orders/<uuid:order_id>/entrega-ifood/cancelar/', EntregaIfoodCancelarView.as_view(),
          name='entrega-ifood-cancelar'),

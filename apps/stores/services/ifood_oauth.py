@@ -35,8 +35,10 @@ BASE = 'https://merchant-api.ifood.com.br'
 URL_TOKEN = f'{BASE}/authentication/v1.0/oauth/token'
 TIMEOUT = 10
 
-#: Renova com folga: o cache expira 10 min antes do iFood.
-FOLGA_S = 600
+#: Critério de homologação: renovar o token SÓ quando expira, nunca antes.
+#: O cache dura o expiresIn; token vencido no meio do caminho é tratado pelo
+#: retry de 401 em `api()`.
+FOLGA_S = 0
 
 _CREDENCIAIS = {
     'pedidos': ('IFOOD_CLIENT_ID', 'IFOOD_CLIENT_SECRET'),
