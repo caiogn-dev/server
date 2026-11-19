@@ -467,8 +467,11 @@ def processar_eventos() -> dict:
     if not merchants:
         return resultado
     try:
+        # excludeHeartbeat: OBRIGATÓRIO para quem só faz logística — sem ele o
+        # polling conta como "PDV online" e ABRE a loja no app do iFood.
         eventos = ifood_oauth.api(APP, 'GET', '/events/v1.0/events:polling',
-                                  cabecalhos={'x-polling-merchants': ','.join(merchants)}) or []
+                                  cabecalhos={'x-polling-merchants': ','.join(merchants)},
+                                  params={'excludeHeartbeat': 'true'}) or []
     except (ifood_oauth.IfoodRecusou, ifood_oauth.IfoodNaoConfigurado) as exc:
         logger.warning('entrega_ifood: polling falhou: %s', exc)
         return resultado

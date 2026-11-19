@@ -309,6 +309,8 @@ class EventosTest(Base):
         get = chamadas[0]
         self.assertEqual((get[0], get[2]), ('entregas', '/events/v1.0/events:polling'))
         self.assertEqual(get[4]['cabecalhos'], {'x-polling-merchants': MERCHANT})
+        # Sem isso o polling de logística ABRE a loja no app do iFood.
+        self.assertEqual(get[4]['params'], {'excludeHeartbeat': 'true'})
         ack = chamadas[-1]
         self.assertEqual(ack[2], '/events/v1.0/events/acknowledgment')
         self.assertEqual(ack[3], [{'id': 'ev-REQUEST_DRIVER_SUCCESS'}, {'id': 'ev-DELIVERY_IN_TRANSIT'}])
