@@ -344,8 +344,13 @@ class MessengerPlatformService:
     def verify_webhook(self, verify_token: str, 
                        challenge: str, mode: str) -> Optional[str]:
         """Verifica webhook do Messenger"""
+        import hmac
         from django.conf import settings
-        
-        if mode == 'subscribe' and verify_token == getattr(settings, 'MESSENGER_VERIFY_TOKEN', ''):
+
+        expected = getattr(settings, 'MESSENGER_VERIFY_TOKEN', '') or ''
+        tokens_match = bool(expected) and bool(verify_token) and hmac.compare_digest(
+            str(verify_token).encode(), str(expected).encode()
+        )
+        if mode == 'subscribe' and tokens_match:
             return challenge
         return None
