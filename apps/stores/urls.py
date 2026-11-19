@@ -217,7 +217,8 @@ from .api.analytics_views import (
 )
 from .api.repasse_99_views import ImportarExtrato99View
 from .api.entrega_ifood_views import (
-    EntregaIfoodCancelarView, EntregaIfoodChamarView, EntregaIfoodView,
+    EntregaIfoodCancelarView, EntregaIfoodChamarView, EntregaIfoodEnderecoView, EntregaIfoodMotivosView,
+    EntregaIfoodView,
     PedidoIfoodCancelarView, PedidoIfoodMotivosView, PedidoIfoodNegociacaoView,
 )
 from .api.integracoes_views import (
@@ -471,6 +472,10 @@ urlpatterns = [
     path('orders/<uuid:order_id>/entrega-ifood/chamar/', EntregaIfoodChamarView.as_view(), name='entrega-ifood-chamar'),
     path('orders/<uuid:order_id>/entrega-ifood/cancelar/', EntregaIfoodCancelarView.as_view(),
          name='entrega-ifood-cancelar'),
+    path('orders/<uuid:order_id>/entrega-ifood/motivos-cancelamento/', EntregaIfoodMotivosView.as_view(),
+         name='entrega-ifood-motivos'),
+    path('orders/<uuid:order_id>/entrega-ifood/endereco/', EntregaIfoodEnderecoView.as_view(),
+         name='entrega-ifood-endereco'),
     path('orders/<uuid:order_id>/whatsapp/', OrderWhatsAppView.as_view(), name='order-whatsapp'),
     path('orders/<uuid:order_id>/receipt/', OrderReceiptView.as_view(), name='order-receipt'),
     

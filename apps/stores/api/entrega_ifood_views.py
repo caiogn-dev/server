@@ -47,7 +47,42 @@ class EntregaIfoodCancelarView(APIView):
         if pedido is None:
             return Response({'detail': 'Pedido não encontrado.'}, status=404)
         try:
-            entrega_ifood.cancelar(pedido, str((request.data or {}).get('motivo') or ''))
+            dados = request.data or {}
+            codigo = dados.get('codigo')
+            entrega_ifood.cancelar(pedido, str(dados.get('motivo') or ''),
+                                   codigo=str(codigo) if codigo not in (None, '') else None)
+        except entrega_ifood.EntregaIfoodRecusada as exc:
+            return Response({'detail': str(exc)}, status=400)
+        pedido.refresh_from_db()
+        return Response(entrega_ifood.estado(pedido))
+
+
+class EntregaIfoodMotivosView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, order_id):
+        pedido = _pedido(request, order_id)
+        if pedido is None:
+            return Response({'detail': 'Pedido não encontrado.'}, status=404)
+        try:
+            return Response({'motivos': entrega_ifood.motivos_de_cancelamento(pedido)})
+        except entrega_ifood.EntregaIfoodRecusada as exc:
+            return Response({'detail': str(exc)}, status=400)
+
+
+class EntregaIfoodEnderecoView(APIView):
+    """Cliente pediu outro endereço: a loja aceita ou recusa."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, order_id):
+        pedido = _pedido(request, order_id)
+        if pedido is None:
+            return Response({'detail': 'Pedido não encontrado.'}, status=404)
+        aceitar = (request.data or {}).get('aceitar')
+        if not isinstance(aceitar, bool):
+            return Response({'detail': 'Envie aceitar: true ou false.'}, status=400)
+        try:
+            entrega_ifood.responder_endereco(pedido, aceitar)
         except entrega_ifood.EntregaIfoodRecusada as exc:
             return Response({'detail': str(exc)}, status=400)
         pedido.refresh_from_db()

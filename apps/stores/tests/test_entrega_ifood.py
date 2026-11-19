@@ -315,6 +315,56 @@ class EventosTest(Base):
         self.assertEqual(ack[2], '/events/v1.0/events/acknowledgment')
         self.assertEqual(ack[3], [{'id': 'ev-REQUEST_DRIVER_SUCCESS'}, {'id': 'ev-DELIVERY_IN_TRANSIT'}])
 
+    def test_evento_repetido_nao_e_aplicado_duas_vezes_mas_recebe_ack(self):
+        self._pedido_chamado()
+        eventos = [self._evento('REQUEST_DRIVER_SUCCESS')]
+        acks = []
+
+        def falso(app, metodo, caminho, corpo=None, **kw):
+            if metodo == 'POST':
+                acks.append(corpo)
+            return eventos if metodo == 'GET' else None
+        with mock.patch.object(ent.ifood_oauth, 'api', side_effect=falso), \
+             mock.patch.object(ent, 'aplicar_evento', wraps=ent.aplicar_evento) as aplicar:
+            ent.processar_eventos()
+            ent.processar_eventos()  # ACK perdido: o iFood manda de novo
+        self.assertEqual(aplicar.call_count, 1)
+        self.assertEqual(len(acks), 2)
+
+    def test_cliente_pede_mudanca_de_endereco(self):
+        pedido = self._pedido_chamado()
+        ent.aplicar_evento(self._evento('DELIVERY_ADDRESS_CHANGE_REQUESTED', metadata={
+            'address': {'streetName': 'Rua Nova', 'streetNumber': '10', 'neighborhood': 'Centro',
+                        'city': 'Palmas', 'state': 'TO', 'complement': 'Ap 2',
+                        'coordinates': {'latitude': -10.18, 'longitude': -48.33}},
+            'timeoutAt': '2099-01-01T00:00:00Z'}))
+        pedido.refresh_from_db()
+        mudanca = pedido.metadata['entrega_ifood']['mudanca_endereco']
+        self.assertEqual(mudanca['status'], 'PEDIDA')
+        self.assertIn('Rua Nova, 10', mudanca['texto'])
+        self.assertEqual(mudanca['prazo'], '2099-01-01T00:00:00Z')
+        self.assertTrue(ent.estado(pedido)['mudanca_endereco'])
+
+    def test_aceitar_mudanca_troca_o_endereco_do_pedido(self):
+        pedido = self._pedido_chamado()
+        ent._gravar_meta(pedido, mudanca_endereco={'status': 'PEDIDA', 'endereco': {
+            'street': 'Rua Nova', 'number': '10', 'neighborhood': 'Centro', 'city': 'Palmas', 'state': 'TO'}})
+        with mock.patch.object(ent.ifood_oauth, 'api', return_value=None) as api:
+            ent.responder_endereco(pedido, aceitar=True)
+        self.assertEqual(api.call_args.args[1:3], ('POST', '/shipping/v1.0/orders/entrega-1/acceptDeliveryAddressChange'))
+        pedido.refresh_from_db()
+        self.assertEqual(pedido.delivery_address['street'], 'Rua Nova')
+        self.assertEqual(pedido.metadata['entrega_ifood']['mudanca_endereco']['status'], 'ACEITA')
+
+    def test_recusar_mudanca(self):
+        pedido = self._pedido_chamado()
+        ent._gravar_meta(pedido, mudanca_endereco={'status': 'PEDIDA', 'endereco': {}})
+        with mock.patch.object(ent.ifood_oauth, 'api', return_value=None) as api:
+            ent.responder_endereco(pedido, aceitar=False)
+        self.assertTrue(api.call_args.args[2].endswith('/denyDeliveryAddressChange'))
+        with self.assertRaises(ent.EntregaIfoodRecusada):  # já respondida
+            ent.responder_endereco(pedido, aceitar=True)
+
     def test_sem_loja_ativa_nao_faz_polling(self):
         self.integ.conectado = False
         self.integ.save()
@@ -342,6 +392,26 @@ class CancelarTest(Base):
         self.assertEqual(chamadas[1][2]['cancellationCode'], 817)
         pedido.refresh_from_db()
         self.assertEqual(pedido.external_delivery_status, 'CANCELLATION_REQUESTED')
+
+    def test_cancela_com_o_motivo_escolhido_pelo_lojista(self):
+        pedido = self._pedido(external_delivery_provider='ifood', external_delivery_id='entrega-1',
+                              external_delivery_status='REQUEST_DRIVER_SUCCESS')
+        motivos = [{'cancelCodeId': '817', 'description': 'Cliente desistiu'},
+                   {'cancelCodeId': '818', 'description': 'Loja sem entregador'}]
+        corpos = []
+
+        def falso(app, metodo, caminho, corpo=None, **kw):
+            corpos.append(corpo)
+            return motivos if metodo == 'GET' else None
+        with mock.patch.object(ent.ifood_oauth, 'api', side_effect=falso):
+            self.assertEqual(ent.motivos_de_cancelamento(pedido),
+                             [{'codigo': '817', 'descricao': 'Cliente desistiu'},
+                              {'codigo': '818', 'descricao': 'Loja sem entregador'}])
+            ent.cancelar(pedido, codigo='818')
+            with self.assertRaises(ent.EntregaIfoodRecusada):
+                ent.cancelar(pedido, codigo='999')
+        self.assertEqual(corpos[2]['cancellationCode'], 818)
+        self.assertEqual(corpos[2]['reason'], 'Loja sem entregador')
 
     def test_sem_motivo_disponivel_nao_da_mais_para_cancelar(self):
         pedido = self._pedido(external_delivery_provider='ifood', external_delivery_id='entrega-1',
@@ -415,6 +485,24 @@ class PainelDoPedidoTest(Base):
         self.assertEqual(d['status_texto'], 'Saiu para entrega')
         self.assertEqual(d['codigo_entrega'], '7766')
         self.assertEqual(d['rastreio_url'], 'https://meupedido.ifood.com.br/x')
+
+    def test_motivos_e_cancelar_com_codigo(self):
+        pedido = self._pedido(external_delivery_provider='ifood', external_delivery_id='entrega-1')
+        with mock.patch.object(ent, 'motivos_de_cancelamento', return_value=[{'codigo': '1', 'descricao': 'X'}]):
+            r = self.client.get(f'/api/v1/stores/orders/{pedido.id}/entrega-ifood/motivos-cancelamento/')
+        self.assertEqual(r.json()['motivos'][0]['codigo'], '1')
+        with mock.patch.object(ent, 'cancelar') as cancelar:
+            self.client.post(f'/api/v1/stores/orders/{pedido.id}/entrega-ifood/cancelar/', {'codigo': '1'}, format='json')
+        self.assertEqual(cancelar.call_args.kwargs['codigo'], '1')
+
+    def test_responder_endereco(self):
+        pedido = self._pedido(external_delivery_provider='ifood', external_delivery_id='entrega-1')
+        url = f'/api/v1/stores/orders/{pedido.id}/entrega-ifood/endereco/'
+        self.assertEqual(self.client.post(url, {'aceitar': 'sim'}, format='json').status_code, 400)
+        with mock.patch.object(ent, 'responder_endereco') as resp:
+            r = self.client.post(url, {'aceitar': True}, format='json')
+        self.assertEqual(r.status_code, 200, r.content)
+        resp.assert_called_once()
 
     def test_chamar_pelo_painel(self):
         pedido = self._pedido()

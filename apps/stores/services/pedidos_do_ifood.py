@@ -434,10 +434,16 @@ def processar_eventos_da_loja(store) -> dict:
     resultado['eventos'] = len(eventos)
     reconhecer = []
     for evento in eventos:
+        if ifood_oauth.evento_ja_visto(evento.get('id')):
+            reconhecer.append({'id': evento['id']})
+            continue
         try:
             with transaction.atomic():
                 if aplicar_evento(store, evento) and str(evento.get('code') or '').upper() == PEDIDO_NOVO:
                     resultado['pedidos_novos'] += 1
+            ifood_oauth.lembrar_evento(evento.get('id'))
+            logger.info('ifood: evento %s %s pedido=%s loja=%s ok', evento.get('id'), evento.get('code'),
+                        evento.get('orderId'), store.slug)
         except Exception as exc:  # sem ACK: o iFood manda de novo no próximo ciclo
             resultado['falhas'] += 1
             logger.warning('ifood: evento %s (%s) de %s falhou: %s',

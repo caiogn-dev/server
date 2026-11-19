@@ -196,6 +196,21 @@ class PedidosDoIfoodTest(TestCase):
         polling = self.chamadas[0]
         self.assertEqual(polling[3], {'x-polling-merchants': 'merchant-1'})
 
+    def test_evento_repetido_pelo_id_nao_e_reaplicado(self):
+        from django.core.cache import cache
+        cache.clear()
+        eventos = [{'id': 'ev-hsd', 'code': 'HSD', 'orderId': PEDIDO,
+                    'metadata': {'id': 'd-9', 'message': 'x'}}]
+        with mock.patch.object(pif, 'imprimir_depois'), mock.patch.object(pif, 'confirmar_depois'):
+            pif.receber_pedido_novo(self.store, _pedido())
+        with self._api({('GET', '/events/v1.0/events:polling'): eventos}), \
+             mock.patch.object(pif, 'aplicar_evento', wraps=pif.aplicar_evento) as aplicar:
+            pif.processar_eventos_da_loja(self.store)
+            pif.processar_eventos_da_loja(self.store)
+        self.assertEqual(aplicar.call_count, 1)
+        acks = [c for c in self.chamadas if c[1] == '/events/v1.0/events/acknowledgment']
+        self.assertEqual(len(acks), 2)
+
     def test_evento_que_falhou_nao_recebe_ack_para_voltar_no_proximo_polling(self):
         eventos = [{'id': 'ev1', 'code': 'PLC', 'orderId': PEDIDO}]
         respostas = {

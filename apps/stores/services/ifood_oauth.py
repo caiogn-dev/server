@@ -171,6 +171,22 @@ def _espera(resposta, tentativa: int):
     return espera if espera <= ESPERA_MAX_S else None
 
 
+# ── eventos: deduplicação pelo id ────────────────────────────────────────
+
+#: Um evento cujo ACK se perdeu volta no próximo polling; o id dele fica
+#: lembrado por 1 dia para não ser aplicado duas vezes (recebe ACK de novo).
+EVENTO_TTL_S = 60 * 60 * 24
+
+
+def evento_ja_visto(evento_id) -> bool:
+    return bool(evento_id) and cache.get(f'ifood:evento:{evento_id}') is not None
+
+
+def lembrar_evento(evento_id):
+    if evento_id:
+        cache.set(f'ifood:evento:{evento_id}', 1, timeout=EVENTO_TTL_S)
+
+
 # ── a loja ───────────────────────────────────────────────────────────────
 
 def integracao_da_loja(store):

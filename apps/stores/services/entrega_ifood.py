@@ -380,25 +380,89 @@ def chamar(order, preparo_s: int = 0):
         cache.delete(trava)
 
 
-def cancelar(order, motivo: str = ''):
+def motivos_de_cancelamento(order) -> list:
+    """Motivos que o iFood aceita AGORA para esta entrega (o painel lista)."""
     if order.external_delivery_provider != PROVEDOR or not order.external_delivery_id:
         raise EntregaIfoodRecusada('Este pedido não tem entregador iFood.')
-    entrega = order.external_delivery_id
-    motivos = _api('GET', f'/shipping/v1.0/orders/{entrega}/cancellationReasons')
+    motivos = _api('GET', f'/shipping/v1.0/orders/{order.external_delivery_id}/cancellationReasons') or []
+    saida = []
+    for m in motivos if isinstance(motivos, list) else []:
+        codigo = m.get('cancelCodeId') or m.get('code') or m.get('cancellationCode')
+        if codigo is not None:
+            saida.append({'codigo': str(codigo), 'descricao': str(m.get('description') or '')})
+    return saida
+
+
+def cancelar(order, motivo: str = '', codigo: str | None = None):
+    """Cancela o entregador. `codigo` = motivo escolhido pelo lojista entre os
+    do iFood; sem ele (cancelamento automático do pedido) vai o primeiro."""
+    motivos = motivos_de_cancelamento(order)
     if not motivos:
         raise EntregaIfoodRecusada('O iFood não permite mais cancelar esta entrega.')
-    escolhido = motivos[0]
-    codigo = escolhido.get('cancelCodeId') or escolhido.get('code') or escolhido.get('cancellationCode')
+    if codigo is not None:
+        escolhido = next((m for m in motivos if m['codigo'] == str(codigo)), None)
+        if escolhido is None:
+            raise EntregaIfoodRecusada('Escolha um dos motivos do iFood.')
+    else:
+        escolhido = motivos[0]
     try:
-        codigo = int(codigo)
+        numero = int(escolhido['codigo'])
     except (TypeError, ValueError):
         raise EntregaIfoodRecusada('iFood devolveu motivo de cancelamento inválido.')
-    _api('POST', f'/shipping/v1.0/orders/{entrega}/cancel', corpo={
-        'reason': (motivo or escolhido.get('description') or 'Cancelado pela loja')[:250],
-        'cancellationCode': codigo,
+    _api('POST', f'/shipping/v1.0/orders/{order.external_delivery_id}/cancel', corpo={
+        'reason': ((escolhido['descricao'] if codigo is not None else motivo) or escolhido['descricao']
+                   or 'Cancelado pela loja')[:250],
+        'cancellationCode': numero,
     })
     from apps.stores.models import StoreOrder
     StoreOrder.objects.filter(pk=order.pk).update(external_delivery_status='CANCELLATION_REQUESTED')
+    order.refresh_from_db()
+    return order
+
+
+# ── mudança de endereço pedida pelo cliente ──────────────────────────────
+
+def _endereco_do_ifood(a: dict) -> dict:
+    coord = a.get('coordinates') or {}
+    return {k: v for k, v in {
+        'street': a.get('streetName') or '', 'number': a.get('streetNumber') or '',
+        'complement': a.get('complement') or '', 'neighborhood': a.get('neighborhood') or '',
+        'city': a.get('city') or '', 'state': a.get('state') or '', 'zip_code': a.get('postalCode') or '',
+        'reference': a.get('reference') or '',
+        'lat': coord.get('latitude'), 'lng': coord.get('longitude'),
+    }.items() if v not in ('', None)}
+
+
+def _mudanca_de_endereco(pedido, codigo: str, extra: dict):
+    atual = dict((pedido.metadata or {}).get(CHAVE_META, {}).get('mudanca_endereco') or {})
+    if codigo.endswith('_REQUESTED'):
+        endereco = _endereco_do_ifood(extra.get('address') or extra.get('deliveryAddress') or extra)
+        texto = ', '.join(x for x in (
+            f"{endereco.get('street', '')}, {endereco.get('number', '')}".strip(', '),
+            endereco.get('complement'), endereco.get('neighborhood'), endereco.get('city')) if x)
+        _gravar_meta(pedido, mudanca_endereco={
+            'status': 'PEDIDA', 'endereco': endereco, 'texto': texto,
+            'prazo': str(extra.get('timeoutAt') or extra.get('expiresAt') or ''),
+            'pedida_em': timezone.now().isoformat(),
+        })
+    else:
+        fim = codigo.rsplit('_', 1)[-1]
+        atual['status'] = {'ACCEPTED': 'ACEITA', 'DENIED': 'RECUSADA', 'CONFIRMED': 'ACEITA'}.get(fim, fim)
+        _gravar_meta(pedido, mudanca_endereco=atual)
+
+
+def responder_endereco(order, aceitar: bool):
+    mudanca = dict((order.metadata or {}).get(CHAVE_META, {}).get('mudanca_endereco') or {})
+    if mudanca.get('status') != 'PEDIDA':
+        raise EntregaIfoodRecusada('Não há mudança de endereço esperando resposta.')
+    acao = 'acceptDeliveryAddressChange' if aceitar else 'denyDeliveryAddressChange'
+    _api('POST', f'/shipping/v1.0/orders/{order.external_delivery_id}/{acao}')
+    mudanca.update({'status': 'ACEITA' if aceitar else 'RECUSADA', 'respondida_em': timezone.now().isoformat()})
+    _gravar_meta(order, mudanca_endereco=mudanca)
+    if aceitar and mudanca.get('endereco'):
+        from apps.stores.models import StoreOrder
+        novo = {**(order.delivery_address or {}), **mudanca['endereco']}
+        StoreOrder.objects.filter(pk=order.pk).update(delivery_address=novo)
     order.refresh_from_db()
     return order
 
@@ -441,6 +505,8 @@ def aplicar_evento(evento: dict) -> bool:
             'nome': entregador.get('workerName') or entregador.get('driverName') or '',
             'telefone': entregador.get('workerPhone') or entregador.get('driverPhone') or '',
         })
+    if codigo.startswith('DELIVERY_ADDRESS_CHANGE'):
+        _mudanca_de_endereco(pedido, codigo, extra)
     if codigo == 'REQUEST_DRIVER_FAILED':
         _gravar_meta(pedido, erro='Nenhum entregador iFood aceitou.', erro_em=timezone.now().isoformat())
 
@@ -480,9 +546,15 @@ def processar_eventos() -> dict:
     resultado['eventos'] = len(eventos)
     reconhecer = []
     for evento in eventos:
+        if ifood_oauth.evento_ja_visto(evento.get('id')):
+            reconhecer.append({'id': evento['id']})
+            continue
         try:
             with transaction.atomic():
                 aplicar_evento(evento)
+            ifood_oauth.lembrar_evento(evento.get('id'))
+            logger.info('entrega_ifood: evento %s %s entrega=%s ok', evento.get('id'),
+                        evento.get('fullCode') or evento.get('code'), evento.get('orderId'))
         except Exception as exc:  # sem ACK: volta no próximo ciclo
             resultado['falhas'] += 1
             logger.warning('entrega_ifood: evento %s (%s) falhou: %s',
@@ -519,6 +591,7 @@ def estado(order) -> dict:
         'entregador': meta.get('entregador') if chamado else None,
         'valor': float(valor) if valor not in (None, '') else None,
         'erro': meta.get('erro') or '',
+        'mudanca_endereco': meta.get('mudanca_endereco') if (meta.get('mudanca_endereco') or {}).get('status') == 'PEDIDA' else None,
     }
 
 
