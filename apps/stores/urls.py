@@ -220,7 +220,8 @@ from .api.entrega_ifood_views import (
     EntregaIfoodCancelarView, EntregaIfoodChamarView, EntregaIfoodView,
 )
 from .api.integracoes_views import (
-    IfoodConfigView, IfoodDesconectarView, IntegracoesDaLojaView,
+    IfoodConfigView, IfoodDesconectarView, IntegracoesDaLojaView, LojaNoIfoodHorariosView,
+    LojaNoIfoodPausarView, LojaNoIfoodRetomarView, LojaNoIfoodView,
 )
 from .api.payment_views import (
     StorePaymentViewSet, StorePaymentGatewayViewSet, StorePaymentWebhookEventViewSet
@@ -513,6 +514,10 @@ urlpatterns = [
     path('reports/99food/extrato/', ImportarExtrato99View.as_view(), name='importar-extrato-99'),
     path('integracoes/', IntegracoesDaLojaView.as_view(), name='integracoes-da-loja'),
     path('integracoes/ifood/', IfoodConfigView.as_view(), name='ifood-config'),
+    path('integracoes/ifood/loja/', LojaNoIfoodView.as_view(), name='ifood-loja'),
+    path('integracoes/ifood/loja/pausar/', LojaNoIfoodPausarView.as_view(), name='ifood-loja-pausar'),
+    path('integracoes/ifood/loja/retomar/', LojaNoIfoodRetomarView.as_view(), name='ifood-loja-retomar'),
+    path('integracoes/ifood/loja/horarios/', LojaNoIfoodHorariosView.as_view(), name='ifood-loja-horarios'),
     path('integracoes/ifood/desconectar/', IfoodDesconectarView.as_view(), name='ifood-desconectar'),
     path('reports/geography/', GeographyReportView.as_view(), name='geography-report'),
     path('reports/sla/', SlaReportView.as_view(), name='sla-report'),

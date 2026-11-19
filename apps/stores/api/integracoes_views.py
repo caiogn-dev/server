@@ -153,3 +153,46 @@ class IfoodDesconectarView(APIView):
             return erro
         ifood_oauth.desconectar(loja)
         return Response(_estado_ifood(loja))
+
+
+# ── iFood Merchant: status, pausas e horário da loja no iFood ────────────
+
+class _LojaNoIfoodBase(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _responder(self, request, operacao=None):
+        from ..services import loja_no_ifood
+        loja, erro = _loja_ou_erro(request)
+        if erro:
+            return erro
+        try:
+            if operacao:
+                operacao(loja_no_ifood, loja)
+            return Response(loja_no_ifood.resumo(loja))
+        except loja_no_ifood.LojaNoIfoodErro as exc:
+            return Response({'detail': str(exc)}, status=400)
+
+
+class LojaNoIfoodView(_LojaNoIfoodBase):
+    def get(self, request):
+        return self._responder(request)
+
+
+class LojaNoIfoodPausarView(_LojaNoIfoodBase):
+    def post(self, request):
+        dados = request.data or {}
+        return self._responder(request, lambda m, loja: m.pausar(
+            loja, dados.get('minutos'), str(dados.get('motivo') or '')))
+
+
+class LojaNoIfoodRetomarView(_LojaNoIfoodBase):
+    def post(self, request):
+        return self._responder(request, lambda m, loja: m.retomar(loja, (request.data or {}).get('id')))
+
+
+class LojaNoIfoodHorariosView(_LojaNoIfoodBase):
+    def put(self, request):
+        horarios = (request.data or {}).get('horarios')
+        if not isinstance(horarios, list):
+            return Response({'detail': 'Envie os horários.'}, status=400)
+        return self._responder(request, lambda m, loja: m.salvar_horarios(loja, horarios))
