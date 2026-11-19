@@ -739,14 +739,25 @@ def buscar_pedidos_do_ifood():
     from apps.stores.models import StoreIfoodIntegration
     from apps.stores.services import ifood_oauth, pedidos_do_ifood
 
+    from django.core.cache import cache
+
     if not ifood_oauth.esta_configurado():
         return
-    vinculos = StoreIfoodIntegration.objects.filter(conectado=True).select_related('store')
-    for vinculo in vinculos:
-        try:
-            pedidos_do_ifood.processar_eventos_da_loja(vinculo.store)
-        except Exception:
-            logger.exception('ifood: polling da loja %s quebrou', vinculo.store.slug)
+    # Beat a cada 30 s; se uma rodada atrasar, a próxima não corre junto
+    # (dois pollings ao mesmo tempo pegariam os mesmos eventos).
+    if not cache.add('ifood:polling-pedidos', 1, timeout=25):
+        return
+    try:
+        lojas = [v.store for v in StoreIfoodIntegration.objects.filter(conectado=True)
+                 .select_related('store').order_by('pk')]
+        lote = pedidos_do_ifood.LOJAS_POR_POLLING
+        for inicio in range(0, len(lojas), lote):
+            try:
+                pedidos_do_ifood.processar_eventos(lojas[inicio:inicio + lote])
+            except Exception:
+                logger.exception('ifood: polling do lote %s quebrou', inicio // lote)
+    finally:
+        cache.delete('ifood:polling-pedidos')
 
 
 @shared_task(bind=True, max_retries=4)

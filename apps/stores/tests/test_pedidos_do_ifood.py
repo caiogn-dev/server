@@ -221,6 +221,52 @@ class PedidosDoIfoodTest(TestCase):
             pif.processar_eventos_da_loja(self.store)
         self.assertFalse([c for c in self.chamadas if c[1] == '/events/v1.0/events/acknowledgment'])
 
+    def test_eventos_sao_aplicados_na_ordem_em_que_aconteceram(self):
+        eventos = [
+            {'id': 'b', 'code': 'CON', 'orderId': PEDIDO, 'createdAt': '2026-11-19T15:10:00.000Z'},
+            {'id': 'a', 'code': 'CFM', 'orderId': PEDIDO, 'createdAt': '2026-11-19T15:01:00.000Z'},
+        ]
+        self._pedido_salvo()
+        with self._api({('GET', '/events/v1.0/events:polling'): eventos}), \
+             mock.patch.object(pif, 'aplicar_evento', return_value=True) as aplicar:
+            pif.processar_eventos_da_loja(self.store)
+        self.assertEqual([c.args[1]['id'] for c in aplicar.call_args_list], ['a', 'b'])
+
+    def test_evento_que_falha_sempre_recebe_ack_depois_de_5_tentativas(self):
+        from django.core.cache import cache
+        cache.clear()
+        eventos = [{'id': 'ev-ruim', 'code': 'PLC', 'orderId': PEDIDO}]
+        respostas = {
+            ('GET', '/events/v1.0/events:polling'): eventos,
+            ('GET', f'/order/v1.0/orders/{PEDIDO}'): pif.ErroDoIfood('400'),
+        }
+        with self._api(respostas):
+            for _ in range(5):
+                pif.processar_eventos_da_loja(self.store)
+        acks = [c for c in self.chamadas if c[1] == '/events/v1.0/events/acknowledgment']
+        self.assertEqual(len(acks), 1)
+        self.assertEqual(acks[0][2], [{'id': 'ev-ruim'}])
+
+    def test_uma_chamada_de_polling_para_varias_lojas(self):
+        dono = User.objects.create_user(username='dono-lote', password='x')
+        outra = Store.objects.create(billing_exempt=True, name='Agrião', slug='agriao-lote', owner=dono,
+                                     store_type='food', status='active')
+        StoreIfoodIntegration.objects.create(store=outra, conectado=True, merchant_id='merchant-2')
+        eventos = [
+            {'id': 'e1', 'code': 'CON', 'orderId': 'x1', 'merchantId': 'merchant-1'},
+            {'id': 'e2', 'code': 'CON', 'orderId': 'x2', 'merchantId': 'merchant-2'},
+        ]
+        with self._api({('GET', '/events/v1.0/events:polling'): eventos}), \
+             mock.patch.object(pif, 'aplicar_evento', return_value=False) as aplicar:
+            pif.processar_eventos([self.store, outra])
+        polling = [c for c in self.chamadas if c[1] == '/events/v1.0/events:polling']
+        self.assertEqual(len(polling), 1)
+        self.assertEqual(set(polling[0][3]['x-polling-merchants'].split(',')), {'merchant-1', 'merchant-2'})
+        lojas = {c.args[1]['id']: c.args[0].pk for c in aplicar.call_args_list}
+        self.assertEqual(lojas, {'e1': self.store.pk, 'e2': outra.pk})
+        acks = [c for c in self.chamadas if c[1] == '/events/v1.0/events/acknowledgment']
+        self.assertEqual(sorted(e['id'] for e in acks[0][2]), ['e1', 'e2'])
+
     def test_sem_eventos_nao_chama_ack(self):
         with self._api({('GET', '/events/v1.0/events:polling'): None}):
             resultado = pif.processar_eventos_da_loja(self.store)
@@ -382,15 +428,78 @@ class PedidosDoIfoodTest(TestCase):
                              [{'codigo': '501', 'descricao': 'Problemas de sistema'},
                               {'codigo': '503', 'descricao': 'Item indisponível'}])
             pif.cancelar_no_ifood(pedido, '501')
+        caminhos = [c[1] for c in self.chamadas]
+        # consulta os motivos ANTES de pedir o cancelamento
+        self.assertLess(caminhos.index(f'/order/v1.0/orders/{PEDIDO}/cancellationReasons'),
+                        caminhos.index(f'/order/v1.0/orders/{PEDIDO}/requestCancellation'))
         corpo = [c for c in self.chamadas if c[1].endswith('/requestCancellation')][0][2]
         self.assertEqual(corpo['cancellationCode'], '501')
         pedido.refresh_from_db()
-        self.assertEqual(pedido.status, StoreOrder.OrderStatus.CANCELLED)
+        # Só o iFood cancela: o pedido espera o evento CAN.
+        self.assertNotEqual(pedido.status, StoreOrder.OrderStatus.CANCELLED)
+        self.assertEqual(pedido.metadata['ifood']['cancelamento']['status'], 'ENVIADO')
+        self.assertEqual(pedido.metadata['ifood']['cancelamento']['codigo'], '501')
         # o aviso automático de status não pede cancelamento de novo
         self.chamadas = []
         with self._api({}):
             pif.avisar_status(pedido, 'cancelled', 'x')
         self.assertFalse(any(c[1].endswith('/requestCancellation') for c in self.chamadas))
+
+    def test_ciclo_do_cancelamento_pedido_pela_loja(self):
+        pedido = self._pedido_salvo()
+        motivos = [{'cancelCodeId': '501', 'description': 'Problemas de sistema'}]
+        with self._api({('GET', f'/order/v1.0/orders/{PEDIDO}/cancellationReasons'): motivos}):
+            pif.cancelar_no_ifood(pedido, '501')
+        with self._api({}):
+            pif.aplicar_evento(self.store, {'id': 'e1', 'code': 'CAR', 'orderId': PEDIDO})
+        pedido.refresh_from_db()
+        self.assertEqual(pedido.metadata['ifood']['cancelamento']['status'], 'EM_ANALISE')
+        self.assertNotIn('pedido_do_cliente', pedido.metadata['ifood'])
+        with self._api({}):
+            pif.aplicar_evento(self.store, {'id': 'e2', 'code': 'CAN', 'orderId': PEDIDO, 'metadata': {
+                'CANCEL_CODE': '501', 'CANCELLATION_ORIGIN': 'RESTAURANT',
+                'CANCEL_REASON': 'Problemas de sistema na loja'}})
+        pedido.refresh_from_db()
+        self.assertEqual(pedido.status, StoreOrder.OrderStatus.CANCELLED)
+        self.assertEqual(pedido.metadata['ifood']['cancelamento']['status'], 'CANCELADO')
+        self.assertEqual(pedido.metadata['ifood']['cancelamento']['origem'], 'RESTAURANT')
+        self.assertIn('Problemas de sistema na loja', pedido.cancel_reason)
+
+    def test_cancelamento_negado_volta_o_pedido_e_avisa(self):
+        pedido = self._pedido_salvo()
+        motivos = [{'cancelCodeId': '501', 'description': 'Problemas de sistema'}]
+        with self._api({('GET', f'/order/v1.0/orders/{PEDIDO}/cancellationReasons'): motivos}):
+            pif.cancelar_no_ifood(pedido, '501')
+        with self._api({}):
+            pif.aplicar_evento(self.store, {'id': 'e1', 'code': 'CARF', 'orderId': PEDIDO,
+                                            'metadata': {'reason': 'Pedido já saiu'}})
+        pedido.refresh_from_db()
+        self.assertNotEqual(pedido.status, StoreOrder.OrderStatus.CANCELLED)
+        self.assertEqual(pedido.metadata['ifood']['cancelamento']['status'], 'NEGADO')
+        self.assertIn('negou', pedido.metadata['ifood']['ultimo_erro'])
+        # negado → a loja pode tentar de novo
+        self.chamadas = []
+        with self._api({('GET', f'/order/v1.0/orders/{PEDIDO}/cancellationReasons'): motivos}):
+            pif.cancelar_no_ifood(pedido, '501')
+        self.assertTrue(any(c[1].endswith('/requestCancellation') for c in self.chamadas))
+
+    def test_cancelamento_ja_enviado_nao_e_enviado_de_novo(self):
+        pedido = self._pedido_salvo()
+        motivos = [{'cancelCodeId': '501', 'description': 'Problemas de sistema'}]
+        with self._api({('GET', f'/order/v1.0/orders/{PEDIDO}/cancellationReasons'): motivos}):
+            pif.cancelar_no_ifood(pedido, '501')
+            with self.assertRaises(pif.ErroDoIfood):
+                pif.cancelar_no_ifood(pedido, '501')
+        self.assertEqual(len([c for c in self.chamadas if c[1].endswith('/requestCancellation')]), 1)
+
+    def test_cancelado_pelo_cliente_ou_ifood_registra_a_origem(self):
+        pedido = self._pedido_salvo()
+        with self._api({}):
+            pif.aplicar_evento(self.store, {'id': 'e', 'code': 'CAN', 'orderId': PEDIDO, 'metadata': {
+                'CANCELLATION_ORIGIN': 'CONSUMER', 'CANCEL_REASON': 'Desisti'}})
+        pedido.refresh_from_db()
+        self.assertEqual(pedido.metadata['ifood']['cancelamento']['origem'], 'CONSUMER')
+        self.assertIn('cliente', pedido.cancel_reason.lower())
 
     def test_falha_do_ifood_fica_registrada_no_pedido(self):
         pedido = self._pedido_salvo()
@@ -424,22 +533,37 @@ class TarefaDoPollingTest(TestCase):
     @override_settings(IFOOD_CLIENT_ID='', IFOOD_CLIENT_SECRET='')
     def test_sem_app_configurado_a_tarefa_nao_faz_nada(self):
         from apps.stores.tasks import buscar_pedidos_do_ifood
-        with mock.patch.object(pif, 'processar_eventos_da_loja') as processar:
+        with mock.patch.object(pif, 'processar_eventos') as processar:
             buscar_pedidos_do_ifood()
         processar.assert_not_called()
 
     def test_tarefa_passa_so_pelas_lojas_conectadas(self):
         from apps.stores.tasks import buscar_pedidos_do_ifood
+        from django.core.cache import cache
+        cache.clear()
         dono = User.objects.create_user(username='dono-polling', password='x')
         ligada = Store.objects.create(billing_exempt=True, name='A', slug='a-ifood', owner=dono,
                                       store_type='food', status='active')
         desligada = Store.objects.create(billing_exempt=True, name='B', slug='b-ifood', owner=dono,
                                          store_type='food', status='active')
-        StoreIfoodIntegration.objects.create(store=ligada, conectado=True, refresh_token='r')
-        StoreIfoodIntegration.objects.create(store=desligada, conectado=False)
-        with mock.patch.object(pif, 'processar_eventos_da_loja', return_value={'eventos': 0}) as processar:
+        StoreIfoodIntegration.objects.create(store=ligada, conectado=True, merchant_id='m-a', refresh_token='r')
+        StoreIfoodIntegration.objects.create(store=desligada, conectado=False, merchant_id='m-b')
+        with mock.patch.object(pif, 'processar_eventos', return_value={'eventos': 0}) as processar:
             buscar_pedidos_do_ifood()
-        self.assertEqual([c.args[0].pk for c in processar.call_args_list], [ligada.pk])
+        self.assertEqual([[l.pk for l in c.args[0]] for c in processar.call_args_list], [[ligada.pk]])
+
+    def test_duas_rodadas_ao_mesmo_tempo_nao_se_atropelam(self):
+        from apps.stores.tasks import buscar_pedidos_do_ifood
+        from django.core.cache import cache
+        cache.clear()
+        dono = User.objects.create_user(username='dono-trava', password='x')
+        loja = Store.objects.create(billing_exempt=True, name='A', slug='trava-ifood', owner=dono,
+                                    store_type='food', status='active')
+        StoreIfoodIntegration.objects.create(store=loja, conectado=True, merchant_id='m-a')
+        cache.add('ifood:polling-pedidos', 1, timeout=25)
+        with mock.patch.object(pif, 'processar_eventos') as processar:
+            buscar_pedidos_do_ifood()
+        processar.assert_not_called()
 
     def test_mudar_status_no_painel_agenda_aviso_ao_ifood(self):
         from apps.stores.services.order_service import OrderService

@@ -367,12 +367,17 @@ def aplicar_evento(store, evento: dict) -> bool:
               StoreOrder.OrderStatus.CANCELLED)
 
     if codigo == CANCELADO:
+        info = _info_do_cancelamento(evento)
+        cancelamento = dict(dados_ifood(pedido).get('cancelamento') or {})
+        cancelamento.update({'status': 'CANCELADO', 'em': agora.isoformat(), **info})
         if pedido.status != StoreOrder.OrderStatus.CANCELLED:
             pedido.status = StoreOrder.OrderStatus.CANCELLED
             pedido.cancelled_at = agora
-            pedido.cancel_reason = 'Cancelado no iFood'
+            pedido.cancel_reason = _texto_do_cancelamento(cancelamento)[:500]
             pedido.save(update_fields=['status', 'cancelled_at', 'cancel_reason', 'updated_at'])
-        _registrar(pedido, cancelado_no_ifood=True)
+        _registrar(pedido, cancelado_no_ifood=True, cancelamento=cancelamento)
+        logger.info('ifood: pedido %s CANCELADO origem=%s codigo=%s motivo=%s', order_id,
+                    cancelamento.get('origem'), cancelamento.get('codigo'), cancelamento.get('motivo'))
     elif codigo == CONCLUIDO:
         if pedido.status not in finais:
             pedido.status = StoreOrder.OrderStatus.DELIVERED
@@ -381,9 +386,22 @@ def aplicar_evento(store, evento: dict) -> bool:
     elif codigo == CONFIRMADO:
         _registrar(pedido, confirmado=True)
     elif codigo == CANCELAMENTO_PEDIDO:
-        _registrar(pedido, pedido_do_cliente={'tipo': 'cancelamento', 'em': agora.isoformat()})
+        # CAR = o iFood recebeu o pedido de cancelamento DA LOJA e está processando.
+        cancelamento = dict(dados_ifood(pedido).get('cancelamento') or {})
+        if cancelamento.get('status') != 'CANCELADO':
+            cancelamento.update({'status': 'EM_ANALISE', 'em': agora.isoformat()})
+            _registrar(pedido, cancelamento=cancelamento)
+        logger.info('ifood: pedido %s cancelamento EM_ANALISE codigo=%s', order_id, cancelamento.get('codigo'))
     elif codigo == CANCELAMENTO_NEGADO:
-        _registrar(pedido, ultimo_erro='O iFood negou o cancelamento pedido pela loja.')
+        info = _info_do_cancelamento(evento)
+        cancelamento = dict(dados_ifood(pedido).get('cancelamento') or {})
+        cancelamento.update({'status': 'NEGADO', 'em': agora.isoformat(),
+                             'motivo_negado': info.get('motivo', '')})
+        aviso = 'O iFood negou o cancelamento pedido pela loja.'
+        if info.get('motivo'):
+            aviso += f" {info['motivo']}"
+        _registrar(pedido, cancelamento=cancelamento, ultimo_erro=aviso)
+        logger.warning('ifood: pedido %s cancelamento NEGADO: %s', order_id, info.get('motivo'))
     elif codigo == NEGOCIACAO:
         disputa = evento.get('metadata') if isinstance(evento.get('metadata'), dict) else {}
         _registrar(pedido, disputa={
@@ -415,50 +433,117 @@ def aplicar_evento(store, evento: dict) -> bool:
     return True
 
 
-def processar_eventos_da_loja(store) -> dict:
-    """Um ciclo de polling: busca, aplica e dá ACK no que deu certo."""
-    resultado = {'eventos': 0, 'pedidos_novos': 0, 'falhas': 0}
-    integracao = _integracao(store)
-    if integracao is None or not integracao.conectado:
-        return resultado
+_ORIGENS = {'RESTAURANT': 'loja', 'MERCHANT': 'loja', 'CONSUMER': 'cliente', 'CUSTOMER': 'cliente',
+            'IFOOD': 'iFood', 'LOGISTIC': 'iFood (entrega)'}
 
-    cabecalhos = {'x-polling-merchants': integracao.merchant_id} if integracao.merchant_id else None
+
+def _info_do_cancelamento(evento: dict) -> dict:
+    """Quem cancelou e por quê, como vier no metadata do evento (chaves variam)."""
+    meta = evento.get('metadata') if isinstance(evento.get('metadata'), dict) else {}
+    plano = {str(k).upper(): v for k, v in meta.items()}
+    def pegar(*nomes):
+        for nome in nomes:
+            if plano.get(nome) not in (None, ''):
+                return str(plano[nome])
+        return ''
+    info = {
+        'origem': pegar('CANCELLATION_ORIGIN', 'CANCEL_ORIGIN', 'ORIGIN'),
+        'codigo': pegar('CANCEL_CODE', 'CANCELLATION_CODE', 'REASON_CODE'),
+        'motivo': pegar('CANCEL_REASON', 'CANCELLATION_REASON', 'REASON', 'DESCRIPTION', 'DETAILS'),
+    }
+    return {k: v for k, v in info.items() if v}
+
+
+def _texto_do_cancelamento(cancelamento: dict) -> str:
+    quem = _ORIGENS.get(str(cancelamento.get('origem') or '').upper(), '')
+    texto = 'Cancelado no iFood' + (f' pela {quem}' if quem in ('loja',) else f' pelo {quem}' if quem else '')
+    motivo = cancelamento.get('motivo') or cancelamento.get('descricao') or ''
+    if motivo:
+        texto += f': {motivo}'
+    if cancelamento.get('codigo'):
+        texto += f" ({cancelamento['codigo']})"
+    return texto
+
+
+#: Até 100 lojas por chamada de polling (limite do iFood para x-polling-merchants).
+LOJAS_POR_POLLING = 100
+#: Evento que falha N vezes seguidas recebe ACK mesmo assim (senão volta para sempre).
+TENTATIVAS_POR_EVENTO = 5
+
+
+def _momento(evento) -> str:
+    return str(evento.get('createdAt') or '')
+
+
+def processar_eventos(lojas) -> dict:
+    """Um ciclo de polling para várias lojas: busca, aplica em ordem e dá ACK."""
+    from django.core.cache import cache
+
+    resultado = {'eventos': 0, 'pedidos_novos': 0, 'falhas': 0}
+    por_merchant = {}
+    for store in lojas:
+        integracao = _integracao(store)
+        if integracao is not None and integracao.conectado:
+            por_merchant[str(integracao.merchant_id or '')] = store
+    if not por_merchant:
+        return resultado
+    lojas_ativas = list(por_merchant.values())
+    merchants = [m for m in por_merchant if m]
+    cabecalhos = {'x-polling-merchants': ','.join(merchants)} if merchants else None
+    primeira = lojas_ativas[0]
     try:
-        eventos = _chamar(store, 'GET', '/events/v1.0/events:polling', cabecalhos=cabecalhos) or []
+        eventos = _chamar(primeira, 'GET', '/events/v1.0/events:polling', cabecalhos=cabecalhos) or []
     except ErroDoIfood as exc:
-        logger.warning('ifood: polling de %s falhou: %s', store.slug, exc)
+        logger.warning('ifood: polling de %s falhou: %s', ','.join(merchants) or primeira.slug, exc)
         return resultado
     if not isinstance(eventos, list) or not eventos:
         return resultado
 
     resultado['eventos'] = len(eventos)
     reconhecer = []
-    for evento in eventos:
-        if ifood_oauth.evento_ja_visto(evento.get('id')):
-            reconhecer.append({'id': evento['id']})
-            continue
-        try:
-            with transaction.atomic():
-                if aplicar_evento(store, evento) and str(evento.get('code') or '').upper() == PEDIDO_NOVO:
-                    resultado['pedidos_novos'] += 1
-            ifood_oauth.lembrar_evento(evento.get('id'))
-            logger.info('ifood: evento %s %s pedido=%s loja=%s ok', evento.get('id'), evento.get('code'),
-                        evento.get('orderId'), store.slug)
-        except Exception as exc:  # sem ACK: o iFood manda de novo no próximo ciclo
-            resultado['falhas'] += 1
-            logger.warning('ifood: evento %s (%s) de %s falhou: %s',
-                           evento.get('id'), evento.get('code'), store.slug, exc)
-            continue
-        if evento.get('id'):
-            reconhecer.append({'id': evento['id']})
+    for evento in sorted(eventos, key=_momento):
+        evento_id = evento.get('id')
+        store = por_merchant.get(str(evento.get('merchantId') or '')) or (
+            lojas_ativas[0] if len(lojas_ativas) == 1 else None)
+        if store is None:
+            logger.warning('ifood: evento %s de merchant desconhecido %s — ACK sem aplicar',
+                           evento_id, evento.get('merchantId'))
+        elif ifood_oauth.evento_ja_visto(evento_id):
+            pass
+        else:
+            try:
+                with transaction.atomic():
+                    if aplicar_evento(store, evento) and str(evento.get('code') or '').upper() == PEDIDO_NOVO:
+                        resultado['pedidos_novos'] += 1
+                ifood_oauth.lembrar_evento(evento_id)
+                logger.info('ifood: evento %s %s pedido=%s loja=%s ok', evento_id, evento.get('code'),
+                            evento.get('orderId'), store.slug)
+            except Exception as exc:  # sem ACK: o iFood manda de novo no próximo ciclo
+                resultado['falhas'] += 1
+                chave = f'ifood:evento-falhas:{evento_id}'
+                falhas = (cache.get(chave) or 0) + 1
+                cache.set(chave, falhas, timeout=60 * 60 * 6)
+                if falhas < TENTATIVAS_POR_EVENTO:
+                    logger.warning('ifood: evento %s (%s) pedido=%s de %s falhou (%s/%s): %s',
+                                   evento_id, evento.get('code'), evento.get('orderId'), store.slug,
+                                   falhas, TENTATIVAS_POR_EVENTO, exc)
+                    continue
+                logger.error('ifood: evento %s (%s) pedido=%s desistido após %s falhas: %s',
+                             evento_id, evento.get('code'), evento.get('orderId'), falhas, exc)
+        if evento_id:
+            reconhecer.append({'id': evento_id})
 
     if reconhecer:
         try:
-            _chamar(store, 'POST', '/events/v1.0/events/acknowledgment', corpo=reconhecer)
+            _chamar(primeira, 'POST', '/events/v1.0/events/acknowledgment', corpo=reconhecer)
         except ErroDoIfood as exc:
-            # Sem ACK os eventos voltam; o pedido novo é idempotente pelo order_id.
-            logger.warning('ifood: ACK de %s falhou: %s', store.slug, exc)
+            # Sem ACK os eventos voltam; tudo é idempotente pelo eventId/orderId.
+            logger.warning('ifood: ACK de %s eventos falhou: %s', len(reconhecer), exc)
     return resultado
+
+
+def processar_eventos_da_loja(store) -> dict:
+    return processar_eventos([store])
 
 
 # ── Painel → iFood ────────────────────────────────────────────────────────
@@ -524,7 +609,8 @@ def avisar_status(pedido, novo_status: str, motivo: str = ''):
             _avisar_pronto(pedido)
             _executar(pedido, 'dispatch')
     elif novo_status == 'cancelled':
-        if dados.get('cancelado_no_ifood') or dados.get('cancelamento_solicitado'):
+        if dados.get('cancelado_no_ifood') or (dados.get('cancelamento') or {}).get('status') in (
+                'ENVIADO', 'EM_ANALISE', 'CANCELADO'):
             return
         codigo, descricao = _codigo_de_cancelamento(pedido, motivo)
         _executar(pedido, 'requestCancellation', corpo={
@@ -549,7 +635,17 @@ def motivos_de_cancelamento(pedido) -> list:
 
 
 def cancelar_no_ifood(pedido, codigo: str, detalhe: str = ''):
-    """Cancela com o motivo que o lojista escolheu entre os do iFood."""
+    """Pede ao iFood o cancelamento com o motivo que o lojista escolheu.
+
+    Fluxo exigido na homologação: GET cancellationReasons → escolha → POST
+    requestCancellation (202). O pedido NÃO é cancelado aqui: quem decide é o
+    iFood, pelos eventos CAR (em análise) → CAN (cancelado) ou CARF (negado).
+    """
+    from apps.stores.models import StoreOrder
+    if pedido.status == StoreOrder.OrderStatus.CANCELLED or dados_ifood(pedido).get('cancelado_no_ifood'):
+        raise ErroDoIfood('Este pedido já está cancelado.')
+    if (dados_ifood(pedido).get('cancelamento') or {}).get('status') in ('ENVIADO', 'EM_ANALISE'):
+        raise ErroDoIfood('O cancelamento já foi pedido; aguardando o iFood.')
     motivos = {m['codigo']: m['descricao'] for m in motivos_de_cancelamento(pedido)}
     codigo = str(codigo or '')
     if codigo not in motivos:
@@ -557,10 +653,12 @@ def cancelar_no_ifood(pedido, codigo: str, detalhe: str = ''):
     _executar(pedido, 'requestCancellation', corpo={
         'reason': (detalhe or motivos[codigo])[:250], 'cancellationCode': codigo,
     })
-    _registrar(pedido, cancelamento_solicitado=codigo)
-    if pedido.status != 'cancelled':
-        from apps.stores.services.order_service import OrderService
-        OrderService().update_status(pedido, 'cancelled', notify_customer=False, motivo=motivos[codigo])
+    _registrar(pedido, cancelamento_solicitado=codigo, cancelamento={
+        'status': 'ENVIADO', 'codigo': codigo, 'descricao': motivos[codigo],
+        'detalhe': detalhe[:250], 'origem': 'RESTAURANT', 'pedido_em': timezone.now().isoformat(),
+    })
+    logger.info('ifood: pedido %s requestCancellation codigo=%s (%s) enviado; aguardando CAN/CARF',
+                dados_ifood(pedido).get('order_id'), codigo, motivos[codigo])
     return pedido
 
 
