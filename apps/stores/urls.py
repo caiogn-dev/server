@@ -216,7 +216,9 @@ from .api.analytics_views import (
     StoreScoreView,
 )
 from .api.repasse_99_views import ImportarExtrato99View
-from .api.integracoes_views import IntegracoesDaLojaView
+from .api.integracoes_views import (
+    IfoodConcluirView, IfoodDesconectarView, IfoodIniciarView, IntegracoesDaLojaView,
+)
 from .api.payment_views import (
     StorePaymentViewSet, StorePaymentGatewayViewSet, StorePaymentWebhookEventViewSet
 )
@@ -503,6 +505,9 @@ urlpatterns = [
     path('reports/channels/', ChannelsReportView.as_view(), name='channels-report'),
     path('reports/99food/extrato/', ImportarExtrato99View.as_view(), name='importar-extrato-99'),
     path('integracoes/', IntegracoesDaLojaView.as_view(), name='integracoes-da-loja'),
+    path('integracoes/ifood/iniciar/', IfoodIniciarView.as_view(), name='ifood-iniciar'),
+    path('integracoes/ifood/concluir/', IfoodConcluirView.as_view(), name='ifood-concluir'),
+    path('integracoes/ifood/desconectar/', IfoodDesconectarView.as_view(), name='ifood-desconectar'),
     path('reports/geography/', GeographyReportView.as_view(), name='geography-report'),
     path('reports/sla/', SlaReportView.as_view(), name='sla-report'),
     path('reports/finance/', FinanceReportView.as_view(), name='finance-report'),

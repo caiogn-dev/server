@@ -187,6 +187,11 @@ app.conf.beat_schedule = {
     },
     # 99Food: recebido de cada pedido pela API financeira (7 dias até ontem).
     # 06:00 em America/Sao_Paulo (CELERY_TIMEZONE); idempotente.
+    # iFood: polling de pedidos (30 s mantém a loja aberta no app do iFood).
+    'buscar-pedidos-do-ifood': {
+        'task': 'apps.stores.tasks.buscar_pedidos_do_ifood',
+        'schedule': 30.0,
+    },
     'conciliar-repasse-da-99': {
         'task': 'apps.stores.tasks.conciliar_repasse_da_99',
         'schedule': crontab(hour=6, minute=0),

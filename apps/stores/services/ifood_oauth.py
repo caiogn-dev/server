@@ -112,7 +112,8 @@ def iniciar_vinculo(store) -> dict:
 
     return {
         'user_code': integracao.user_code,
-        'url': dados.get('verificationUrl', ''),
+        # A URL completa já leva o código: o lojista só confirma no portal.
+        'url': dados.get('verificationUrlComplete') or dados.get('verificationUrl', ''),
         'expira_em': integracao.user_code_expires_at,
     }
 
@@ -182,5 +183,19 @@ def _guardar_tokens(integracao, dados: dict):
     integracao.conectado = bool(integracao.access_token)
     integracao.ultimo_erro = ''
     integracao.ultima_renovacao = timezone.now()
+    integracao.save()
+    return integracao
+
+
+def desconectar(store):
+    """Esquece o vínculo. O lojista revoga o app no Portal do Parceiro se quiser."""
+    integracao = integracao_da_loja(store)
+    integracao.access_token = ''
+    integracao.refresh_token = ''
+    integracao.token_expires_at = None
+    integracao.authorization_code_verifier = ''
+    integracao.user_code = ''
+    integracao.conectado = False
+    integracao.ultimo_erro = ''
     integracao.save()
     return integracao

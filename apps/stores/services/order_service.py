@@ -213,6 +213,10 @@ class OrderService:
             from apps.stores.services.pedidos_da_99 import avisar_status_depois
             pk, motivo_99 = order.pk, motivo or ''
             transaction.on_commit(lambda: avisar_status_depois(pk, new_status, motivo_99))
+        if order.source == 'ifood' and new_status != old_status:
+            from apps.stores.services.pedidos_do_ifood import avisar_status_depois as avisar_ifood
+            pk_if, motivo_if = order.pk, motivo or ''
+            transaction.on_commit(lambda: avisar_ifood(pk_if, new_status, motivo_if))
 
         # Fidelidade: credita itens qualificados quando o pedido se torna elegível
         # (idempotente por pedido — unique(order, kind) na transação)
@@ -274,6 +278,10 @@ class OrderService:
             from apps.stores.services.pedidos_da_99 import avisar_status_depois
             pk, motivo_99 = order.pk, reason or ''
             transaction.on_commit(lambda: avisar_status_depois(pk, 'cancelled', motivo_99))
+        if order.source == 'ifood':
+            from apps.stores.services.pedidos_do_ifood import avisar_status_depois as avisar_ifood
+            pk_if, motivo_if = order.pk, reason or ''
+            transaction.on_commit(lambda: avisar_ifood(pk_if, 'cancelled', motivo_if))
 
         # Mesma devolução do webhook (`CheckoutService._restore_stock`). A trava
         # de "só uma vez" é o retorno antecipado de pedido já cancelado, acima.

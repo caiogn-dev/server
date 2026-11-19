@@ -731,6 +731,52 @@ def avisar_status_a_99(self, order_id: str, novo_status: str, motivo: str = ''):
         raise self.retry(exc=exc)
 
 
+# ── iFood ─────────────────────────────────────────────────────────────────
+# Polling de 30 s: é o que traz o pedido E o que mantém a loja aberta no app.
+
+@shared_task(name='apps.stores.tasks.buscar_pedidos_do_ifood', ignore_result=True)
+def buscar_pedidos_do_ifood():
+    from apps.stores.models import StoreIfoodIntegration
+    from apps.stores.services import ifood_oauth, pedidos_do_ifood
+
+    if not ifood_oauth.esta_configurado():
+        return
+    vinculos = StoreIfoodIntegration.objects.filter(conectado=True).select_related('store')
+    for vinculo in vinculos:
+        try:
+            pedidos_do_ifood.processar_eventos_da_loja(vinculo.store)
+        except Exception:
+            logger.exception('ifood: polling da loja %s quebrou', vinculo.store.slug)
+
+
+@shared_task(bind=True, max_retries=4)
+def confirmar_pedido_do_ifood(self, order_id: str):
+    from apps.stores.models import StoreOrder
+    from apps.stores.services import pedidos_do_ifood
+
+    pedido = StoreOrder.objects.select_related('store').filter(pk=order_id).first()
+    if pedido is None or pedido.status == StoreOrder.OrderStatus.CANCELLED:
+        return
+    try:
+        pedidos_do_ifood.confirmar(pedido)
+    except pedidos_do_ifood.ErroDoIfood as exc:
+        raise self.retry(exc=exc, countdown=20 * (2 ** self.request.retries))
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def avisar_status_ao_ifood(self, order_id: str, novo_status: str, motivo: str = ''):
+    from apps.stores.models import StoreOrder
+    from apps.stores.services import pedidos_do_ifood
+
+    pedido = StoreOrder.objects.select_related('store').filter(pk=order_id).first()
+    if pedido is None:
+        return
+    try:
+        pedidos_do_ifood.avisar_status(pedido, novo_status, motivo)
+    except pedidos_do_ifood.ErroDoIfood as exc:
+        raise self.retry(exc=exc)
+
+
 @shared_task(name='apps.stores.tasks.conciliar_repasse_da_99', ignore_result=True)
 def conciliar_repasse_da_99(dia: str | None = None):
     """Diária (beat, 06:00): busca na API financeira da 99 o repasse dos 7 dias
