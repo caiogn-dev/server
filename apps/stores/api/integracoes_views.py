@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from django.conf import settings
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -49,8 +50,13 @@ def _estado_mercado_pago(loja) -> dict:
     gateways = StorePaymentGateway.objects.filter(
         store=loja, gateway_type=StorePaymentGateway.GatewayType.MERCADOPAGO, is_enabled=True,
     )
-    conectado = any(g.access_token for g in gateways)
-    return {'conectado': conectado}
+    if any(g.access_token for g in gateways):
+        return {'conectado': True, 'conta': 'loja'}
+    # Loja do próprio dono da plataforma: recebe no Mercado Pago dele
+    # (MERCADO_PAGO_ACCESS_TOKEN) e não tem gateway cadastrado — está conectada.
+    if loja.usa_gateway_da_plataforma and getattr(settings, 'MERCADO_PAGO_ACCESS_TOKEN', ''):
+        return {'conectado': True, 'conta': 'plataforma'}
+    return {'conectado': False, 'conta': None}
 
 
 class IntegracoesDaLojaView(APIView):

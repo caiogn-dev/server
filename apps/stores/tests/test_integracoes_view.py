@@ -87,6 +87,21 @@ class IntegracoesTests(APITestCase):
         )
         self.assertFalse(self._get().data['mercado_pago']['conectado'])
 
+    @override_settings(MERCADO_PAGO_ACCESS_TOKEN='APP_USR-plataforma')
+    def test_loja_que_recebe_na_conta_da_plataforma_esta_conectada(self):
+        # Cê Saladas, Pastita, Ivoneth: lojas do dono, recebem no MP dele.
+        self.loja.usa_gateway_da_plataforma = True
+        self.loja.save(update_fields=['usa_gateway_da_plataforma'])
+        mp = self._get().data['mercado_pago']
+        self.assertTrue(mp['conectado'])
+        self.assertEqual(mp['conta'], 'plataforma')
+
+    @override_settings(MERCADO_PAGO_ACCESS_TOKEN='')
+    def test_flag_da_plataforma_sem_token_nao_conta(self):
+        self.loja.usa_gateway_da_plataforma = True
+        self.loja.save(update_fields=['usa_gateway_da_plataforma'])
+        self.assertFalse(self._get().data['mercado_pago']['conectado'])
+
     def test_loja_de_outro_dono_e_404(self):
         outro = User.objects.create_user(username='outro-integracoes', password='x')
         alheia = Store.objects.create(name='Outra', slug='outra-integra', owner=outro, status='active')
