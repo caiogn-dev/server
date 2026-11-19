@@ -86,12 +86,30 @@ def _status(dados) -> dict:
     }
 
 
+_COM_FUSO = re.compile(r'(Z|[+-]\d{2}:?\d{2})$')
+
+
+def _utc(valor) -> str:
+    """O iFood devolve a hora da pausa em UTC SEM fuso; o painel leria como hora local."""
+    texto = str(valor or '')
+    return texto if not texto or _COM_FUSO.search(texto) else texto + 'Z'
+
+
 def _pausas(dados) -> list:
     return [
         {'id': str(p.get('id') or ''), 'motivo': str(p.get('description') or ''),
-         'inicio': str(p.get('start') or ''), 'fim': str(p.get('end') or '')}
+         'inicio': _utc(p.get('start')), 'fim': _utc(p.get('end'))}
         for p in (dados or []) if isinstance(p, dict)
     ]
+
+
+#: Pausa recém-criada some do GET /interruptions por alguns segundos (medido
+#: ao vivo). Guardamos por 2 min para o painel mostrar na hora.
+_RECENTES_S = 120
+
+
+def _chave_recentes(store) -> str:
+    return f'ifood:pausas-recentes:{_merchant(store)}'
 
 
 def _hhmm(minutos: int) -> str:
@@ -120,10 +138,19 @@ def _horarios(dados) -> list:
     return sorted(saida, key=lambda t: (ordem.get(t['dia'], 9), t['inicio']))
 
 
+def _com_recentes(store, pausas: list) -> list:
+    from django.core.cache import cache
+    ids = {p['id'] for p in pausas}
+    agora = timezone.now().isoformat()
+    recentes = [p for p in (cache.get(_chave_recentes(store)) or [])
+                if p['id'] not in ids and p['fim'] > agora[:19]]
+    return pausas + recentes
+
+
 def resumo(store) -> dict:
     return {
         'status': _status(_chamar(store, 'GET', '/status')),
-        'pausas': _pausas(_chamar(store, 'GET', '/interruptions')),
+        'pausas': _com_recentes(store, _pausas(_chamar(store, 'GET', '/interruptions'))),
         'horarios': _horarios(_chamar(store, 'GET', '/opening-hours')),
     }
 
@@ -137,13 +164,21 @@ def pausar(store, minutos: int, motivo: str = ''):
         raise LojaNoIfoodErro('Tempo de pausa inválido.')
     if not 1 <= minutos <= PAUSA_MAX_MIN:
         raise LojaNoIfoodErro('Pausa entre 1 minuto e 7 dias.')
+    from django.core.cache import cache
     inicio = timezone.now().replace(microsecond=0)
-    _chamar(store, 'POST', '/interruptions', {
+    corpo = {
         'id': str(uuid.uuid4()),
         'description': (motivo or 'Pausa pelo Cardapidex')[:100],
         'start': inicio.isoformat(),
         'end': (inicio + timedelta(minutes=minutos)).isoformat(),
-    })
+    }
+    _chamar(store, 'POST', '/interruptions', corpo)
+    pausa = {'id': corpo['id'], 'motivo': corpo['description'],
+             'inicio': inicio.strftime('%Y-%m-%dT%H:%M:%SZ'),
+             'fim': (inicio + timedelta(minutes=minutos)).strftime('%Y-%m-%dT%H:%M:%SZ')}
+    chave = _chave_recentes(store)
+    cache.set(chave, (cache.get(chave) or []) + [pausa], timeout=_RECENTES_S)
+    return pausa
 
 
 def retomar(store, pausa_id: str):
@@ -151,6 +186,9 @@ def retomar(store, pausa_id: str):
     if not pausa_id or '/' in pausa_id:
         raise LojaNoIfoodErro('Pausa inválida.')
     _chamar(store, 'DELETE', f'/interruptions/{pausa_id}')
+    from django.core.cache import cache
+    chave = _chave_recentes(store)
+    cache.set(chave, [p for p in (cache.get(chave) or []) if p['id'] != pausa_id], timeout=_RECENTES_S)
 
 
 def salvar_horarios(store, horarios: list):

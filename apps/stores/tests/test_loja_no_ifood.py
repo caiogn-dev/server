@@ -115,6 +115,27 @@ class OperacoesTest(Base):
             with self.subTest(minutos=minutos), self.assertRaises(loja.LojaNoIfoodErro):
                 loja.pausar(self.store, minutos)
 
+    def test_pausa_criada_aparece_na_hora_mesmo_antes_do_ifood_listar(self):
+        # Medido ao vivo 19/11: o GET /interruptions só lista a pausa nova
+        # alguns segundos depois do POST.
+        with self._api({('GET', f'{BASE}/status'): STATUS, ('GET', f'{BASE}/interruptions'): [],
+                        ('GET', f'{BASE}/opening-hours'): HORARIOS}):
+            loja.pausar(self.store, 30, 'Cozinha cheia')
+            pausas = loja.resumo(self.store)['pausas']
+        self.assertEqual(len(pausas), 1)
+        self.assertEqual(pausas[0]['motivo'], 'Cozinha cheia')
+        with self._api({('GET', f'{BASE}/status'): STATUS, ('GET', f'{BASE}/interruptions'): [],
+                        ('GET', f'{BASE}/opening-hours'): HORARIOS}):
+            loja.retomar(self.store, pausas[0]['id'])
+            self.assertEqual(loja.resumo(self.store)['pausas'], [])
+
+    def test_hora_sem_fuso_do_ifood_vira_utc(self):
+        # Ao vivo o iFood devolveu "2026-11-19T21:59:59" (UTC, sem fuso).
+        sem_fuso = [{'id': 'p', 'description': 'x', 'start': '2026-11-19T21:59:59', 'end': '2026-11-19T22:14:59'}]
+        with self._api({('GET', f'{BASE}/interruptions'): sem_fuso}):
+            p = loja.resumo(self.store)['pausas'][0]
+        self.assertEqual((p['inicio'], p['fim']), ('2026-11-19T21:59:59Z', '2026-11-19T22:14:59Z'))
+
     def test_retomar_apaga_a_interrupcao(self):
         with self._api():
             loja.retomar(self.store, 'p-1')
