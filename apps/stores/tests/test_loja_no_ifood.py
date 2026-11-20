@@ -129,12 +129,28 @@ class OperacoesTest(Base):
             loja.retomar(self.store, pausas[0]['id'])
             self.assertEqual(loja.resumo(self.store)['pausas'], [])
 
-    def test_hora_sem_fuso_do_ifood_vira_utc(self):
-        # Ao vivo o iFood devolveu "2026-11-19T21:59:59" (UTC, sem fuso).
-        sem_fuso = [{'id': 'p', 'description': 'x', 'start': '2026-11-19T21:59:59', 'end': '2026-11-19T22:14:59'}]
+    def test_hora_sem_fuso_do_ifood_e_horario_de_brasilia(self):
+        # Medido ao vivo 20/11: o iFood LÊ e DEVOLVE a pausa no horário de
+        # Brasília, sem fuso. Pausa mandada em UTC só começava 3 h depois.
+        sem_fuso = [{'id': 'p', 'description': 'x', 'start': '2026-11-20T11:41:06', 'end': '2026-11-20T11:43:06'}]
         with self._api({('GET', f'{BASE}/interruptions'): sem_fuso}):
             p = loja.resumo(self.store)['pausas'][0]
-        self.assertEqual((p['inicio'], p['fim']), ('2026-11-19T21:59:59Z', '2026-11-19T22:14:59Z'))
+        self.assertEqual((p['inicio'], p['fim']), ('2026-11-20T14:41:06Z', '2026-11-20T14:43:06Z'))
+
+    def test_pausar_manda_hora_de_brasilia_sem_fuso(self):
+        from datetime import datetime, timezone as tz
+        agora = datetime(2026, 11, 20, 14, 37, 14, tzinfo=tz.utc)
+        with mock.patch('apps.stores.services.loja_no_ifood.timezone.now', return_value=agora), self._api():
+            pausa = loja.pausar(self.store, 15)
+        corpo = self.chamadas[0][2]
+        self.assertEqual((corpo['start'], corpo['end']), ('2026-11-20T11:37:14', '2026-11-20T11:52:14'))
+        self.assertEqual((pausa['inicio'], pausa['fim']), ('2026-11-20T14:37:14Z', '2026-11-20T14:52:14Z'))
+
+    def test_pausar_usa_o_id_que_o_ifood_devolve(self):
+        # Ao vivo o iFood ignorou o id mandado e criou outro: remover pelo nosso dava 404.
+        with self._api({('POST', f'{BASE}/interruptions'): {'id': 'id-do-ifood', 'description': 'x'}}):
+            pausa = loja.pausar(self.store, 15)
+        self.assertEqual(pausa['id'], 'id-do-ifood')
 
     def test_retomar_apaga_a_interrupcao(self):
         with self._api():

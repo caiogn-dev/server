@@ -19,7 +19,9 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
+from datetime import timezone as dt_timezone
+from zoneinfo import ZoneInfo
 
 from django.utils import timezone
 
@@ -89,10 +91,28 @@ def _status(dados) -> dict:
 _COM_FUSO = re.compile(r'(Z|[+-]\d{2}:?\d{2})$')
 
 
+#: Medido ao vivo 20/11: o iFood LÊ e DEVOLVE a hora da pausa no horário de
+#: Brasília, SEM fuso. Pausa mandada em UTC só começava 3 h depois.
+FUSO_DO_IFOOD = ZoneInfo('America/Sao_Paulo')
+_FMT_UTC = '%Y-%m-%dT%H:%M:%SZ'
+
+
+def _para_ifood(momento) -> str:
+    return momento.astimezone(FUSO_DO_IFOOD).replace(tzinfo=None).isoformat()
+
+
 def _utc(valor) -> str:
-    """O iFood devolve a hora da pausa em UTC SEM fuso; o painel leria como hora local."""
+    """Hora sem fuso do iFood (Brasília) → UTC com Z, que o painel converte certo."""
     texto = str(valor or '')
-    return texto if not texto or _COM_FUSO.search(texto) else texto + 'Z'
+    if not texto:
+        return texto
+    if _COM_FUSO.search(texto):
+        return texto
+    try:
+        local = datetime.fromisoformat(texto).replace(tzinfo=FUSO_DO_IFOOD)
+    except ValueError:
+        return texto
+    return local.astimezone(dt_timezone.utc).strftime(_FMT_UTC)
 
 
 def _pausas(dados) -> list:
@@ -166,16 +186,19 @@ def pausar(store, minutos: int, motivo: str = ''):
         raise LojaNoIfoodErro('Pausa entre 1 minuto e 7 dias.')
     from django.core.cache import cache
     inicio = timezone.now().replace(microsecond=0)
+    fim = inicio + timedelta(minutes=minutos)
     corpo = {
         'id': str(uuid.uuid4()),
         'description': (motivo or 'Pausa pelo Cardapidex')[:100],
-        'start': inicio.isoformat(),
-        'end': (inicio + timedelta(minutes=minutos)).isoformat(),
+        'start': _para_ifood(inicio),
+        'end': _para_ifood(fim),
     }
-    _chamar(store, 'POST', '/interruptions', corpo)
-    pausa = {'id': corpo['id'], 'motivo': corpo['description'],
-             'inicio': inicio.strftime('%Y-%m-%dT%H:%M:%SZ'),
-             'fim': (inicio + timedelta(minutes=minutos)).strftime('%Y-%m-%dT%H:%M:%SZ')}
+    criada = _chamar(store, 'POST', '/interruptions', corpo)
+    # O iFood ignora o id mandado e cria outro; remover pelo nosso dá 404.
+    pausa_id = str(criada.get('id') or '') if isinstance(criada, dict) else ''
+    pausa = {'id': pausa_id or corpo['id'], 'motivo': corpo['description'],
+             'inicio': inicio.astimezone(dt_timezone.utc).strftime(_FMT_UTC),
+             'fim': fim.astimezone(dt_timezone.utc).strftime(_FMT_UTC)}
     chave = _chave_recentes(store)
     cache.set(chave, (cache.get(chave) or []) + [pausa], timeout=_RECENTES_S)
     return pausa
