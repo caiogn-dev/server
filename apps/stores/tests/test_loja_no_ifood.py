@@ -224,3 +224,31 @@ class ViewsTest(Base):
         c.force_authenticate(User.objects.create_user(username='intruso-loja-ifood', password='x'))
         r = c.get(f'{self.url}?store={self.store.slug}')
         self.assertEqual(r.status_code, 404)
+
+
+class MerchantsDoWidgetTest(TestCase):
+    """Widget oficial do iFood no painel: init UMA vez com todas as lojas do usuário."""
+
+    url = '/api/v1/stores/integracoes/ifood/merchants/'
+
+    def setUp(self):
+        self.dono = User.objects.create_user(username='dono-widget', password='x')
+        self.outro = User.objects.create_user(username='outro-widget', password='x')
+        def loja(slug, dono, merchant, conectado=True):
+            s = Store.objects.create(billing_exempt=True, name=slug, slug=slug, owner=dono,
+                                     store_type='food', status='active')
+            StoreIfoodIntegration.objects.create(store=s, merchant_id=merchant, conectado=conectado)
+        loja('a-widget', self.dono, 'm-a')
+        loja('b-widget', self.dono, 'm-b')
+        loja('c-widget', self.dono, 'm-c', conectado=False)
+        loja('d-widget', self.outro, 'm-d')
+        self.client = APIClient()
+
+    def test_so_lojas_conectadas_do_proprio_usuario(self):
+        self.client.force_authenticate(self.dono)
+        r = self.client.get(self.url)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(sorted(r.data['merchant_ids']), ['m-a', 'm-b'])
+
+    def test_sem_login_recusa(self):
+        self.assertIn(self.client.get(self.url).status_code, (401, 403))

@@ -196,3 +196,24 @@ class LojaNoIfoodHorariosView(_LojaNoIfoodBase):
         if not isinstance(horarios, list):
             return Response({'detail': 'Envie os horários.'}, status=400)
         return self._responder(request, lambda m, loja: m.salvar_horarios(loja, horarios))
+
+
+class IfoodMerchantsDoWidgetView(APIView):
+    """IDs das lojas do usuário conectadas ao iFood, para o widget oficial.
+
+    O widget aceita até 10 merchants e deve ser iniciado UMA vez por página com
+    a lista certa: trocar a lista derruba a sessão (doc do iFood). Por isso vai
+    a lista de todas as lojas acessíveis, não a loja selecionada.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from apps.core.permissions import accessible_store_ids
+        ids = list(
+            StoreIfoodIntegration.objects
+            .filter(store_id__in=accessible_store_ids(request.user), conectado=True)
+            .exclude(merchant_id='')
+            .order_by('created_at')
+            .values_list('merchant_id', flat=True)[:10]
+        )
+        return Response({'merchant_ids': ids})

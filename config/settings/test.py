@@ -169,3 +169,8 @@ AUTOMATION_SEMEAR_MENSAGENS_AO_CRIAR_LOJA = False
 # logs/dev.log durante a suíte (eram 10 MB por rodada).
 LOGGING['handlers']['console'] = {'class': 'logging.NullHandler'}  # noqa: F405
 LOGGING['handlers']['file'] = {'class': 'logging.NullHandler'}  # noqa: F405
+
+# Modo homologação do iFood vem do .env de produção (o container de teste herda).
+# Ligado, ele troca a credencial de TODOS os apps e quebra os testes de app.
+IFOOD_HOMOLOGACAO_CLIENT_ID = ''
+IFOOD_HOMOLOGACAO_CLIENT_SECRET = ''
