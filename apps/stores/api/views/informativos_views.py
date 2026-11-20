@@ -60,3 +60,22 @@ class InformativoView(APIView):
         if not servico.apagar(_loja(request), informativo_id):
             raise NotFound('Informativo não encontrado.')
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class InformativoImagemView(APIView):
+    """POST multipart `image`: imagem do modal (troca a anterior)."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, informativo_id):
+        loja = _loja(request)
+        arquivo = request.FILES.get('image')
+        if not arquivo:
+            return Response({'error': 'Envie a imagem no campo "image".'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            item = servico.salvar_imagem(loja, informativo_id, arquivo)
+        except servico.InformativoInvalido as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        if item is None:
+            raise NotFound('Informativo não encontrado.')
+        return Response(item)

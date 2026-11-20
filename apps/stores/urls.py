@@ -16,7 +16,7 @@ from .api.views.operacao_views import (
 )
 from .api.views.lote_views import StoreLoteViewSet
 from .api.views.comanda_views import ComandaImprimirTesteView, ComandaImprimirView, ComandaLayoutView, ComandaPreviaView
-from .api.views.informativos_views import InformativosView, InformativoView
+from .api.views.informativos_views import InformativosView, InformativoView, InformativoImagemView
 from .api.views.exibicao_views import ExibicaoDoCardapioView
 from .api.views import (
     StoreViewSet, StoreIntegrationViewSet, StoreWebhookViewSet,
@@ -428,6 +428,7 @@ urlpatterns = [
     path('exibicao-do-cardapio/', ExibicaoDoCardapioView.as_view(), name='exibicao-do-cardapio'),
     path('informativos/', InformativosView.as_view(), name='informativos'),
     path('informativos/<str:informativo_id>/', InformativoView.as_view(), name='informativo'),
+    path('informativos/<str:informativo_id>/imagem/', InformativoImagemView.as_view(), name='informativo-imagem'),
     # ==========================================================================
     # ADMIN/MANAGEMENT ENDPOINTS (require auth)
     # ==========================================================================

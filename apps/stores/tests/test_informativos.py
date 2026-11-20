@@ -99,4 +99,71 @@ class TestVitrine:
         assert r.status_code == 200, r.content
         informativos = r.json()['informativos']
         assert [i['titulo'] for i in informativos] == ['No ar']
-        assert set(informativos[0]) == {'id', 'titulo', 'texto'}
+        assert set(informativos[0]) == {
+            'id', 'titulo', 'texto', 'formato', 'frequencia', 'imagem_url',
+            'botao_texto', 'botao_link', 'versao',
+        }
+
+
+
+@pytest.mark.django_db
+class TestModal:
+    """Informativo vira modal: aparece ao entrar no cardápio e não repete para quem já viu."""
+
+    def test_novo_nasce_modal_uma_vez(self, api, loja):
+        item = _criar(api, loja).json()
+        assert item['formato'] == 'modal'
+        assert item['frequencia'] == 'uma_vez'
+
+    def test_antigo_sem_formato_continua_faixa(self, loja):
+        from apps.stores.services.informativos import no_ar_para_a_vitrine
+        loja.metadata['informativos'] = [{'id': 'velho', 'titulo': 'Oi', 'texto': '', 'ativo': True}]
+        loja.save()
+        [item] = no_ar_para_a_vitrine(loja)
+        assert item['formato'] == 'faixa'
+        assert item['versao']
+
+    def test_botao_so_com_link_seguro(self, api, loja):
+        ok = _criar(api, loja, botao_texto='Ver combos', botao_link='/ce-saladas/promos')
+        assert ok.status_code == 201, ok.content
+        externo = _criar(api, loja, botao_texto='Insta', botao_link='https://instagram.com/x')
+        assert externo.status_code == 201
+        for ruim in ('javascript:alert(1)', '//evil.com', 'data:text/html,x'):
+            assert _criar(api, loja, botao_texto='X', botao_link=ruim).status_code == 400
+
+    def test_botao_sem_link_ou_link_sem_texto_e_recusado(self, api, loja):
+        assert _criar(api, loja, botao_texto='Ver', botao_link='').status_code == 400
+        assert _criar(api, loja, botao_texto='', botao_link='/x').status_code == 400
+
+    def test_formato_e_frequencia_invalidos(self, api, loja):
+        assert _criar(api, loja, formato='popup-gigante').status_code == 400
+        assert _criar(api, loja, frequencia='sempre').status_code == 400
+
+    def test_editar_muda_a_versao_para_mostrar_de_novo(self, api, loja):
+        item = _criar(api, loja).json()
+        editado = api.patch(f"{URL}{item['id']}/?store={loja.slug}", {'texto': 'Novo horário'},
+                            format='json').json()
+        assert editado['versao'] != item['versao']
+
+    def test_sobe_imagem_e_vitrine_recebe(self, api, loja):
+        import io
+        from PIL import Image
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        buf = io.BytesIO()
+        Image.new('RGB', (20, 20), 'red').save(buf, 'PNG')
+        item = _criar(api, loja).json()
+        r = api.post(f"{URL}{item['id']}/imagem/?store={loja.slug}",
+                     {'image': SimpleUploadedFile('a.png', buf.getvalue(), 'image/png')},
+                     format='multipart')
+        assert r.status_code == 200, r.content
+        assert r.json()['imagem_url']
+        vit = APIClient().get(f'/api/v1/stores/{loja.slug}/app-config/').json()['informativos']
+        assert vit[0]['imagem_url']
+
+    def test_imagem_que_nao_e_imagem_e_recusada(self, api, loja):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        item = _criar(api, loja).json()
+        r = api.post(f"{URL}{item['id']}/imagem/?store={loja.slug}",
+                     {'image': SimpleUploadedFile('a.png', b'<script>', 'image/png')},
+                     format='multipart')
+        assert r.status_code == 400
