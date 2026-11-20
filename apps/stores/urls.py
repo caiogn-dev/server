@@ -5,6 +5,7 @@ Unified API for all stores including cart, checkout, catalog, maps, and webhooks
 This is the UNIFIED e-commerce API that all frontends should use.
 All frontends must use /api/v1/stores/{store_slug}/ endpoints.
 """
+from .api.minhas_marcas_views import MinhasMarcasView
 from django.urls import path, include, re_path
 from rest_framework.routers import DefaultRouter
 from rest_framework_nested import routers as nested_routers
@@ -527,6 +528,7 @@ urlpatterns = [
     path('reports/99food/extrato/', ImportarExtrato99View.as_view(), name='importar-extrato-99'),
     path('integracoes/', IntegracoesDaLojaView.as_view(), name='integracoes-da-loja'),
     path('integracoes/ifood/', IfoodConfigView.as_view(), name='ifood-config'),
+    path('minhas-marcas/', MinhasMarcasView.as_view(), name='minhas-marcas'),
     path('integracoes/ifood/merchants/', IfoodMerchantsDoWidgetView.as_view(), name='ifood-merchants-widget'),
     path('integracoes/ifood/loja/', LojaNoIfoodView.as_view(), name='ifood-loja'),
     path('integracoes/ifood/loja/pausar/', LojaNoIfoodPausarView.as_view(), name='ifood-loja-pausar'),
