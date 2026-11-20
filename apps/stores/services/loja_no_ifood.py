@@ -171,8 +171,20 @@ def resumo(store) -> dict:
     return {
         'status': _status(_chamar(store, 'GET', '/status')),
         'pausas': _com_recentes(store, _pausas(_chamar(store, 'GET', '/interruptions'))),
-        'horarios': _horarios(_chamar(store, 'GET', '/opening-hours')),
+        'horarios': _horarios_recentes(store) or _horarios(_chamar(store, 'GET', '/opening-hours')),
     }
+
+
+def _chave_horarios(store) -> str:
+    return f'ifood:horarios-recentes:{_merchant(store)}'
+
+
+def _horarios_recentes(store):
+    """Grade recém-salva. Medido ao vivo 20/11: o PUT responde 201 já com a
+    grade nova, mas o GET /opening-hours só reflete 3–15 s depois — o painel
+    relia logo após salvar e "desfazia" a mudança na tela."""
+    from django.core.cache import cache
+    return cache.get(_chave_horarios(store))
 
 
 # ── operações ────────────────────────────────────────────────────────────
@@ -224,7 +236,10 @@ def salvar_horarios(store, horarios: list):
         if fim <= inicio:
             raise LojaNoIfoodErro('O fim do turno tem que ser depois do início.')
         turnos.append({'dayOfWeek': dia, 'start': f'{_hhmm(inicio)}:00', 'duration': fim - inicio})
-    _chamar(store, 'PUT', '/opening-hours', {'storeId': _merchant(store), 'shifts': turnos})
+    salvo = _chamar(store, 'PUT', '/opening-hours', {'storeId': _merchant(store), 'shifts': turnos})
+    confirmado = _horarios(salvo if isinstance(salvo, dict) and salvo.get('shifts') else {'shifts': turnos})
+    from django.core.cache import cache
+    cache.set(_chave_horarios(store), confirmado, timeout=_RECENTES_S)
 
 
 def lojas_do_app() -> list:

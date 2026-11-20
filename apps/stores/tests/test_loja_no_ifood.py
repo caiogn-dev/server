@@ -226,6 +226,21 @@ class ViewsTest(Base):
         self.assertEqual(r.status_code, 404)
 
 
+@override_settings(**CREDENCIAIS)
+class HorarioSalvoApareceNaHoraTest(Base):
+    def test_resumo_mostra_o_salvo_mesmo_com_o_get_do_ifood_atrasado(self):
+        # Medido ao vivo 20/11: PUT 201 já com a grade nova; o GET só reflete
+        # 3–15 s depois. O painel relia logo após salvar e "desfazia" a mudança.
+        velho = {'shifts': [{'dayOfWeek': 'SATURDAY', 'start': '00:00:00', 'duration': 1439}]}
+        with self._api({('PUT', f'{BASE}/opening-hours'): {'shifts': [
+                            {'dayOfWeek': 'SATURDAY', 'start': '13:30:00', 'duration': 330}]},
+                        ('GET', f'{BASE}/status'): STATUS, ('GET', f'{BASE}/interruptions'): [],
+                        ('GET', f'{BASE}/opening-hours'): velho}):
+            loja.salvar_horarios(self.store, [{'dia': 'SATURDAY', 'inicio': '13:30', 'fim': '19:00'}])
+            horarios = loja.resumo(self.store)['horarios']
+        self.assertEqual(horarios, [{'dia': 'SATURDAY', 'inicio': '13:30', 'fim': '19:00'}])
+
+
 class MerchantsDoWidgetTest(TestCase):
     """Widget oficial do iFood no painel: init UMA vez com todas as lojas do usuário."""
 
