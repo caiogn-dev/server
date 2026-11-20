@@ -127,7 +127,7 @@ ESPERA_MAX_S = 5
 
 
 def api(app: str, metodo: str, caminho: str, corpo=None, cabecalhos=None, params=None, timeout=TIMEOUT):
-    """Chamada autenticada. JSON da resposta, ou None sem corpo (202/204).
+    """Chamada autenticada. JSON da resposta (inclusive 202 com corpo), ou None sem corpo.
 
     401 → esquece o token e tenta uma vez. Outros ≥400 → `IfoodRecusou`.
     """
@@ -159,7 +159,8 @@ def api(app: str, metodo: str, caminho: str, corpo=None, cabecalhos=None, params
             raise IfoodRecusou(
                 f'{resposta.status_code}: {resposta.text[:300]}', resposta.status_code, resposta.text,
             )
-        if resposta.status_code in (202, 204) or not resposta.content:
+        # 202 pode trazer corpo: o Shipping devolve {id, trackingUrl} no POST /orders.
+        if resposta.status_code == 204 or not resposta.content:
             return None
         try:
             return resposta.json()

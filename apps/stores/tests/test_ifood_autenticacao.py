@@ -153,6 +153,18 @@ class ApiTest(TestCase):
         self.assertEqual(req.call_args.kwargs['headers']['Authorization'], 'Bearer novo')
 
 
+    def test_202_com_corpo_devolve_o_json(self):
+        """Shipping: POST /orders responde 202 COM {id, trackingUrl} (medido ao vivo 20/11)."""
+        r = mock.Mock(status_code=202, content=b'{"id": "e1", "trackingUrl": "https://t"}')
+        r.json.return_value = {'id': 'e1', 'trackingUrl': 'https://t'}
+        with patch.object(ifood_oauth, 'token', return_value='t'), patch('requests.request', return_value=r):
+            self.assertEqual(ifood_oauth.api('entregas', 'POST', '/x', corpo={}), {'id': 'e1', 'trackingUrl': 'https://t'})
+
+    def test_202_sem_corpo_devolve_none(self):
+        r = mock.Mock(status_code=202, content=b'')
+        with patch.object(ifood_oauth, 'token', return_value='t'), patch('requests.request', return_value=r):
+            self.assertIsNone(ifood_oauth.api('pedidos', 'POST', '/x'))
+
 
 @override_settings(IFOOD_CLIENT_ID='app-p', IFOOD_CLIENT_SECRET='s')
 class RetryTest(TestCase):
