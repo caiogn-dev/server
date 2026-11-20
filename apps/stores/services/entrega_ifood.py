@@ -405,9 +405,9 @@ def cancelar(order, motivo: str = '', codigo: str | None = None):
             raise EntregaIfoodRecusada('Escolha um dos motivos do iFood.')
     else:
         escolhido = motivos[0]
-    try:
-        numero = int(escolhido['codigo'])
-    except (TypeError, ValueError):
+    # Texto, não número: o iFood recusa int com 400 "Unmarshal type error" (medido 20/11).
+    numero = str(escolhido['codigo'] or '').strip()
+    if not numero.isdigit():
         raise EntregaIfoodRecusada('iFood devolveu motivo de cancelamento inválido.')
     _api('POST', f'/shipping/v1.0/orders/{order.external_delivery_id}/cancel', corpo={
         'reason': ((escolhido['descricao'] if codigo is not None else motivo) or escolhido['descricao']

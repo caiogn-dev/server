@@ -389,7 +389,7 @@ class CancelarTest(Base):
             ent.cancelar(pedido, 'cliente desistiu')
         self.assertEqual(chamadas[0][1], '/shipping/v1.0/orders/entrega-1/cancellationReasons')
         self.assertEqual(chamadas[1][1], '/shipping/v1.0/orders/entrega-1/cancel')
-        self.assertEqual(chamadas[1][2]['cancellationCode'], 817)
+        self.assertEqual(chamadas[1][2]['cancellationCode'], '817')  # iFood recusa número (400 Unmarshal, medido 20/11)
         pedido.refresh_from_db()
         self.assertEqual(pedido.external_delivery_status, 'CANCELLATION_REQUESTED')
 
@@ -410,7 +410,7 @@ class CancelarTest(Base):
             ent.cancelar(pedido, codigo='818')
             with self.assertRaises(ent.EntregaIfoodRecusada):
                 ent.cancelar(pedido, codigo='999')
-        self.assertEqual(corpos[2]['cancellationCode'], 818)
+        self.assertEqual(corpos[2]['cancellationCode'], '818')
         self.assertEqual(corpos[2]['reason'], 'Loja sem entregador')
 
     def test_sem_motivo_disponivel_nao_da_mais_para_cancelar(self):
