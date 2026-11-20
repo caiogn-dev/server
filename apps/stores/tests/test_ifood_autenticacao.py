@@ -189,3 +189,29 @@ class RetryTest(TestCase):
             with self.assertRaises(ifood_oauth.IfoodRecusou):
                 ifood_oauth.api('pedidos', 'GET', '/x')
         self.assertEqual(req.call_count, 3)
+
+
+class ModoHomologacaoTest(TestCase):
+    """Homologação de Merchant/Shipping: o iFood exige o APP DE TESTE nas gravações.
+
+    Com IFOOD_HOMOLOGACAO_CLIENT_ID/SECRET no ambiente, os dois apps usam a
+    credencial de teste. Sem elas, nada muda. Tirar do .env depois de aprovado.
+    """
+
+    @override_settings(**CREDENCIAIS, IFOOD_HOMOLOGACAO_CLIENT_ID='app-teste',
+                       IFOOD_HOMOLOGACAO_CLIENT_SECRET='segredo-t')
+    def test_com_credencial_de_teste_os_dois_apps_usam_ela(self):
+        self.assertEqual(ifood_oauth.credenciais('pedidos'), ('app-teste', 'segredo-t'))
+        self.assertEqual(ifood_oauth.credenciais('entregas'), ('app-teste', 'segredo-t'))
+        self.assertTrue(ifood_oauth.esta_configurado('pedidos'))
+
+    @override_settings(**CREDENCIAIS, IFOOD_HOMOLOGACAO_CLIENT_ID='',
+                       IFOOD_HOMOLOGACAO_CLIENT_SECRET='')
+    def test_sem_credencial_de_teste_cada_app_usa_a_sua(self):
+        self.assertEqual(ifood_oauth.credenciais('pedidos'), ('app-pedidos', 'segredo-p'))
+        self.assertEqual(ifood_oauth.credenciais('entregas'), ('app-entregas', 'segredo-e'))
+
+    @override_settings(**CREDENCIAIS, IFOOD_HOMOLOGACAO_CLIENT_ID='app-teste',
+                       IFOOD_HOMOLOGACAO_CLIENT_SECRET='')
+    def test_credencial_de_teste_pela_metade_nao_liga_o_modo(self):
+        self.assertEqual(ifood_oauth.credenciais('pedidos'), ('app-pedidos', 'segredo-p'))

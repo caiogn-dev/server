@@ -675,6 +675,9 @@ IFOOD_CLIENT_ID = os.environ.get('IFOOD_CLIENT_ID', '')
 IFOOD_CLIENT_SECRET = os.environ.get('IFOOD_CLIENT_SECRET', '')
 IFOOD_ENTREGAS_CLIENT_ID = os.environ.get('IFOOD_ENTREGAS_CLIENT_ID', '')
 IFOOD_ENTREGAS_CLIENT_SECRET = os.environ.get('IFOOD_ENTREGAS_CLIENT_SECRET', '')
+# Homologação de Merchant/Shipping: com as duas, todo app usa o app de TESTE.
+IFOOD_HOMOLOGACAO_CLIENT_ID = os.environ.get('IFOOD_HOMOLOGACAO_CLIENT_ID', '')
+IFOOD_HOMOLOGACAO_CLIENT_SECRET = os.environ.get('IFOOD_HOMOLOGACAO_CLIENT_SECRET', '')
 MERCADO_PAGO_WEBHOOK_SECRET = os.environ.get('MERCADO_PAGO_WEBHOOK_SECRET', '')
 MERCADO_PAGO_STATEMENT_DESCRIPTOR = os.environ.get('MERCADO_PAGO_STATEMENT_DESCRIPTOR', 'CARDAPIDEX')
 # Nome do titular da conta coletora exibido no aviso do PIX (o banco do pagador

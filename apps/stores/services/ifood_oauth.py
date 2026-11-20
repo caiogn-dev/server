@@ -64,6 +64,13 @@ class IfoodRecusou(Exception):
 # ── credencial e token ───────────────────────────────────────────────────
 
 def credenciais(app: str) -> tuple[str, str]:
+    # Modo homologação (Merchant/Shipping por vídeo): o iFood exige o app de
+    # TESTE nas gravações. Com as duas variáveis no .env, todo app usa ela.
+    # Tirar do .env quando a homologação for aprovada.
+    teste_id = getattr(settings, 'IFOOD_HOMOLOGACAO_CLIENT_ID', '') or ''
+    teste_segredo = getattr(settings, 'IFOOD_HOMOLOGACAO_CLIENT_SECRET', '') or ''
+    if teste_id and teste_segredo:
+        return teste_id, teste_segredo
     chave_id, chave_segredo = _CREDENCIAIS[app]
     return getattr(settings, chave_id, '') or '', getattr(settings, chave_segredo, '') or ''
 

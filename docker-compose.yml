@@ -84,6 +84,9 @@ x-django-env: &django-env
   IFOOD_CLIENT_SECRET: ${IFOOD_CLIENT_SECRET:-}
   IFOOD_ENTREGAS_CLIENT_ID: ${IFOOD_ENTREGAS_CLIENT_ID:-}
   IFOOD_ENTREGAS_CLIENT_SECRET: ${IFOOD_ENTREGAS_CLIENT_SECRET:-}
+  # Homologação Merchant/Shipping: app de TESTE para os dois apps. Tirar do .env depois.
+  IFOOD_HOMOLOGACAO_CLIENT_ID: ${IFOOD_HOMOLOGACAO_CLIENT_ID:-}
+  IFOOD_HOMOLOGACAO_CLIENT_SECRET: ${IFOOD_HOMOLOGACAO_CLIENT_SECRET:-}
   # Auto-update do print agent (docs/comanda-no-servidor.md §5): o heartbeat
   # devolve versão + zip + sha256; vazio = sem atualização oferecida.
   PRINT_AGENT_UPDATE_VERSION: ${PRINT_AGENT_UPDATE_VERSION:-}
