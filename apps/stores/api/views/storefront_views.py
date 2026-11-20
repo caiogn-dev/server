@@ -509,6 +509,9 @@ class StoreCatalogView(APIView):
             'product_types': CatalogProductTypeSerializer(product_types, many=True).data,
             'products_by_category': products_by_category,
         }
+        # Depois do recorte público: é dado montado aqui, não campo do serializer.
+        from apps.stores.services.outras_marcas import outras_marcas
+        payload['store']['outras_marcas'] = outras_marcas(store)
         cache.set(cache_key, payload, _CATALOG_CACHE_TTL)
         return Response(payload)
 
