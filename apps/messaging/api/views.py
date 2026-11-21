@@ -392,6 +392,9 @@ class MessengerWebhookViewSet(viewsets.ViewSet):
             or getattr(settings, "MESSENGER_VERIFY_TOKEN", "")
         )
 
-        if mode == "subscribe" and token == verify_token:
+        tokens_match = bool(verify_token) and bool(token) and hmac.compare_digest(
+            str(token).encode(), str(verify_token).encode()
+        )
+        if mode == "subscribe" and tokens_match and str(challenge).isdigit():
             return Response(int(challenge))
         return Response("Verification failed", status=403)
