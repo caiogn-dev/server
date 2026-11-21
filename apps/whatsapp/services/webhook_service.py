@@ -3,6 +3,7 @@ Webhook Service - Process incoming webhooks from Meta.
 """
 import logging
 import hashlib
+import hmac
 from contextlib import contextmanager
 import mimetypes
 import re
@@ -119,7 +120,10 @@ class WebhookService:
         """Verify webhook subscription."""
         verify_token = settings.WHATSAPP_WEBHOOK_VERIFY_TOKEN
         
-        if mode == 'subscribe' and token == verify_token:
+        token_ok = bool(verify_token) and bool(token) and hmac.compare_digest(
+            str(token).encode('utf-8'), str(verify_token).encode('utf-8')
+        )
+        if mode == 'subscribe' and token_ok:
             logger.info("Webhook verification successful")
             return challenge
         

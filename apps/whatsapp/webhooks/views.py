@@ -1,6 +1,7 @@
 """\nWhatsApp Webhook views.\n"""
 import logging
 import json
+import hmac
 from django.conf import settings
 from django.utils import timezone
 from rest_framework.views import APIView
@@ -64,8 +65,13 @@ class WhatsAppWebhookView(APIView):
         
         verify_token = getattr(settings, 'WHATSAPP_WEBHOOK_VERIFY_TOKEN', None)
         
-        if mode == 'subscribe' and token == verify_token:
-            logger.info(f"Webhook verified with challenge: {challenge}")
+        # Fail-closed: sem token configurado/enviado não há verificação possível;
+        # compare_digest evita vazar o token por tempo de resposta.
+        token_ok = bool(verify_token) and bool(token) and hmac.compare_digest(
+            str(token).encode('utf-8'), str(verify_token).encode('utf-8')
+        )
+        if mode == 'subscribe' and token_ok:
+            logger.info("Webhook verified")
             return HttpResponse(challenge)
         else:
             logger.warning("Webhook verification failed: mode=%s", mode)
