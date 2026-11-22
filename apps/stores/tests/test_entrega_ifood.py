@@ -686,3 +686,43 @@ class CodigoDeColetaDoPedidoExternoTest(Base):
         with mock.patch('apps.stores.services.order_service.OrderService.update_status') as mudar:
             ent.aplicar_evento(evento)
         mudar.assert_not_called()
+
+
+@override_settings(**CREDENCIAIS)
+class EntregaExternaNoPollingDePedidosTest(Base):
+    """A entrega externa (create order do Shipping) vira pedido no lado do
+    iFood e gera PLC/CAN no polling de PEDIDOS. Medido 22/11: o PLC era
+    importado como pedido novo do iFood (duplicado, confirmado, impresso) e o
+    CAN caía na duplicata — a entrega da loja ficava em "Cancelamento pedido"."""
+
+    def _externo(self, **campos):
+        return self._pedido(source='web', external_delivery_provider='ifood', external_delivery_id='ext-1',
+                            external_delivery_status='CANCELLATION_REQUESTED', **campos)
+
+    def test_plc_da_nossa_entrega_nao_vira_pedido_novo(self):
+        from apps.stores.services import pedidos_do_ifood
+        self._externo()
+        antes = StoreOrder.objects.count()
+        with mock.patch.object(pedidos_do_ifood, '_chamar', side_effect=AssertionError('não busca detalhe')):
+            self.assertFalse(pedidos_do_ifood.aplicar_evento(
+                self.store, {'id': 'e1', 'code': 'PLC', 'fullCode': 'PLACED', 'orderId': 'ext-1'}))
+        self.assertEqual(StoreOrder.objects.count(), antes)
+
+    def test_can_da_nossa_entrega_cancela_a_entrega_e_nao_o_pedido(self):
+        from apps.stores.services import pedidos_do_ifood
+        pedido = self._externo()
+        pedidos_do_ifood.aplicar_evento(
+            self.store, {'id': 'e2', 'code': 'CAN', 'fullCode': 'CANCELLED', 'orderId': 'ext-1'})
+        pedido.refresh_from_db()
+        self.assertEqual(pedido.external_delivery_status, 'CANCELLED')
+        self.assertEqual(pedido.status, 'confirmed')
+        self.assertTrue(ent.estado(pedido)['pode_chamar'])
+
+    def test_cfm_da_nossa_entrega_nao_mexe_no_status_da_entrega(self):
+        from apps.stores.services import pedidos_do_ifood
+        pedido = self._externo(status='confirmed')
+        StoreOrder.objects.filter(pk=pedido.pk).update(external_delivery_status='REQUESTED')
+        pedidos_do_ifood.aplicar_evento(
+            self.store, {'id': 'e3', 'code': 'CFM', 'fullCode': 'CONFIRMED', 'orderId': 'ext-1'})
+        pedido.refresh_from_db()
+        self.assertEqual(pedido.external_delivery_status, 'REQUESTED')

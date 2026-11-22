@@ -343,6 +343,15 @@ def _registrar(pedido, **campos):
     pedido.save(update_fields=['metadata', 'updated_at'])
 
 
+def _nossa_entrega_externa(store, order_id):
+    from apps.stores.models import StoreOrder
+    if not order_id:
+        return None
+    return StoreOrder.objects.filter(
+        store=store, external_delivery_provider=PROVEDOR, external_delivery_id=str(order_id),
+    ).exclude(source=PROVEDOR).first()
+
+
 def _evento_do_entregador_pedido_pela_loja(pedido, evento: dict) -> bool:
     from apps.stores.services import entrega_ifood
     completo = str(evento.get('fullCode') or '').upper()
@@ -357,6 +366,17 @@ def aplicar_evento(store, evento: dict) -> bool:
 
     codigo = str(evento.get('code') or '').upper()
     order_id = evento.get('orderId')
+
+    # A entrega que a LOJA criou no Shipping (pedido do site/WhatsApp) também
+    # existe como pedido no iFood e gera PLC/CFM/CAN aqui. Não é pedido novo:
+    # o que interessa dela vai para a entrega.
+    nossa_entrega = _nossa_entrega_externa(store, order_id)
+    if nossa_entrega is not None:
+        from apps.stores.services import entrega_ifood
+        completo = str(evento.get('fullCode') or '').upper()
+        if completo in entrega_ifood.LOGISTICOS:
+            return entrega_ifood.aplicar_evento(evento)
+        return False
 
     if codigo == PEDIDO_NOVO:
         if pedido_do_ifood(store, order_id):
