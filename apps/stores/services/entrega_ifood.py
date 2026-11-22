@@ -336,6 +336,9 @@ def chamar(order, preparo_s: int = 0):
 
     if order.delivery_method != 'delivery':
         raise EntregaIfoodRecusada('Pedido de retirada não tem entrega.')
+    do_ifood = _dados_do_pedido_ifood(order)
+    if do_ifood is not None and do_ifood.get('entrega_do_ifood'):
+        raise EntregaIfoodRecusada('O iFood já entrega este pedido.')
     if order.external_delivery_provider == PROVEDOR and order.external_delivery_id \
             and order.external_delivery_status not in ENCERRADOS_SEM_ENTREGA:
         return order
@@ -347,6 +350,8 @@ def chamar(order, preparo_s: int = 0):
     if not cache.add(trava, 1, timeout=120):
         return order
     try:
+        if do_ifood is not None:
+            return _pedir_entregador_para_pedido_do_ifood(order, do_ifood)
         endereco = _endereco(order.store, order)
         coords = endereco['coordinates']
         try:
@@ -375,15 +380,81 @@ def chamar(order, preparo_s: int = 0):
         )
         order.refresh_from_db()
         logger.info('entrega_ifood: %s chamado (%s)', order.order_number, entrega_id)
+        _buscar_codigo_de_coleta(order)
         return order
     finally:
         cache.delete(trava)
+
+
+# ── pedido que veio do iFood com entrega da loja (Shipping, cenário 2) ────
+
+def _dados_do_pedido_ifood(order):
+    """O bloco 'ifood' do metadata quando o pedido nasceu no iFood, senão None."""
+    if order.source != PROVEDOR:
+        return None
+    dados = (order.metadata or {}).get(PROVEDOR) if isinstance(order.metadata, dict) else None
+    if not isinstance(dados, dict) or not dados.get('order_id'):
+        return None
+    return dados
+
+
+def _pedir_entregador_para_pedido_do_ifood(order, do_ifood: dict):
+    """deliveryAvailabilities → requestDriver pelo orderId do iFood. O pedido
+    já existe lá: criar pedido externo duplicaria a entrega."""
+    from apps.stores.models import StoreOrder
+
+    pedido_ifood = str(do_ifood['order_id'])
+    try:
+        dados = _api('GET', f'/shipping/v1.0/orders/{pedido_ifood}/deliveryAvailabilities') or {}
+        quote_id = str(dados.get('id') or '')
+        if not quote_id:
+            raise EntregaIfoodRecusada('iFood não devolveu cotação.')
+        _api('POST', f'/shipping/v1.0/orders/{pedido_ifood}/requestDriver', corpo={'quoteId': quote_id})
+    except EntregaIfoodRecusada as exc:
+        _gravar_meta(order, erro=str(exc), erro_codigo=exc.codigo, erro_em=timezone.now().isoformat())
+        raise
+    quote = dados.get('quote') or {}
+    StoreOrder.objects.filter(pk=order.pk).update(
+        external_delivery_provider=PROVEDOR, external_delivery_id=pedido_ifood[:100],
+        external_delivery_status='REQUESTED', external_delivery_code='',
+    )
+    _gravar_meta(
+        order, valor=f"{_decimal(quote.get('netValue', quote.get('grossValue'))):.2f}", quote_id=quote_id,
+        chamado_em=timezone.now().isoformat(), erro='', erro_codigo='', entregador=None,
+        pedido_do_ifood=True,
+    )
+    order.refresh_from_db()
+    logger.info('entrega_ifood: %s requestDriver (pedido iFood %s)', order.order_number, pedido_ifood)
+    return order
+
+
+def _codigo_de_coleta(order) -> str:
+    do_ifood = _dados_do_pedido_ifood(order) or {}
+    return str(_meta(order).get('codigo_coleta') or do_ifood.get('codigo_coleta') or '')
+
+
+def _buscar_codigo_de_coleta(order):
+    """pickupCode vem nos detalhes do pedido no iFood (inclusive do pedido
+    criado pelo create order). Melhor esforço: sem ele a entrega segue."""
+    if not order.external_delivery_id or _codigo_de_coleta(order):
+        return
+    try:
+        detalhe = _api('GET', f'/order/v1.0/orders/{order.external_delivery_id}') or {}
+    except Exception as exc:  # noqa: BLE001 — informativo, nunca derruba a chamada
+        logger.info('entrega_ifood: %s sem pickupCode ainda (%s)', order.order_number, exc)
+        return
+    codigo = str(((detalhe.get('delivery') or {}) if isinstance(detalhe, dict) else {}).get('pickupCode') or '')
+    if codigo:
+        _gravar_meta(order, codigo_coleta=codigo[:30])
 
 
 def motivos_de_cancelamento(order) -> list:
     """Motivos que o iFood aceita AGORA para esta entrega (o painel lista)."""
     if order.external_delivery_provider != PROVEDOR or not order.external_delivery_id:
         raise EntregaIfoodRecusada('Este pedido não tem entregador iFood.')
+    if _pedido_com_entregador_pedido(order):
+        # requestDriver não tem motivos: o cancelamento é só antes do aceite.
+        return [{'codigo': CANCELAR_SOLICITACAO, 'descricao': 'Cancelar a solicitação de entregador'}]
     motivos = _api('GET', f'/shipping/v1.0/orders/{order.external_delivery_id}/cancellationReasons') or []
     saida = []
     for m in motivos if isinstance(motivos, list) else []:
@@ -393,9 +464,25 @@ def motivos_de_cancelamento(order) -> list:
     return saida
 
 
+CANCELAR_SOLICITACAO = 'cancelRequestDriver'
+
+
+def _pedido_com_entregador_pedido(order) -> bool:
+    """Pedido do iFood em que a LOJA pediu o entregador (requestDriver)."""
+    do_ifood = _dados_do_pedido_ifood(order)
+    return do_ifood is not None and not do_ifood.get('entrega_do_ifood') \
+        and order.external_delivery_id == str(do_ifood.get('order_id'))
+
+
 def cancelar(order, motivo: str = '', codigo: str | None = None):
     """Cancela o entregador. `codigo` = motivo escolhido pelo lojista entre os
     do iFood; sem ele (cancelamento automático do pedido) vai o primeiro."""
+    if _pedido_com_entregador_pedido(order):
+        _api('POST', f'/shipping/v1.0/orders/{order.external_delivery_id}/cancelRequestDriver')
+        from apps.stores.models import StoreOrder
+        StoreOrder.objects.filter(pk=order.pk).update(external_delivery_status='CANCELLATION_REQUESTED')
+        order.refresh_from_db()
+        return order
     motivos = motivos_de_cancelamento(order)
     if not motivos:
         raise EntregaIfoodRecusada('O iFood não permite mais cancelar esta entrega.')
@@ -478,6 +565,13 @@ _PARA_O_PEDIDO = {
 _ORDEM = ['pending', 'confirmed', 'processing', 'paid', 'preparing', 'ready', 'shipped',
           'out_for_delivery', 'delivered', 'completed']
 _FINAIS = {'delivered', 'completed', 'cancelled', 'refunded', 'failed'}
+#: Eventos depois dos quais o pedido já existe no iFood com pickupCode.
+_BUSCA_COLETA = frozenset({'REQUEST_DRIVER_SUCCESS', 'ASSIGN_DRIVER', 'GOING_TO_ORIGIN'})
+#: Eventos logísticos (o polling de pedidos repassa estes para cá).
+LOGISTICOS = frozenset(TEXTOS) | _BUSCA_COLETA | frozenset({
+    'DELIVERY_ADDRESS_CHANGE_REQUESTED', 'DELIVERY_ADDRESS_CHANGE_ACCEPTED',
+    'DELIVERY_ADDRESS_CHANGE_DENIED', 'DELIVERY_ADDRESS_CHANGE_USER_CONFIRMED',
+})
 
 
 def aplicar_evento(evento: dict) -> bool:
@@ -510,9 +604,14 @@ def aplicar_evento(evento: dict) -> bool:
     if codigo == 'REQUEST_DRIVER_FAILED':
         _gravar_meta(pedido, erro='Nenhum entregador iFood aceitou.', erro_em=timezone.now().isoformat())
 
+    if codigo in _BUSCA_COLETA:
+        _buscar_codigo_de_coleta(pedido)
+
     novo = _PARA_O_PEDIDO.get(codigo)
     pedido.refresh_from_db()
-    if novo and pedido.status not in _FINAIS and pedido.status in _ORDEM \
+    # Pedido do iFood: o status anda pelos eventos de PEDIDO (Order API); mover
+    # aqui mandaria um dispatch a mais para o iFood.
+    if novo and pedido.source != PROVEDOR and pedido.status not in _FINAIS and pedido.status in _ORDEM \
             and _ORDEM.index(pedido.status) < _ORDEM.index(novo):
         from apps.stores.services.order_service import OrderService
         OrderService().update_status(pedido, novo, notes=f'Entregador iFood: {TEXTOS.get(codigo, codigo)}')
@@ -581,7 +680,9 @@ def estado(order) -> dict:
     return {
         'disponivel': disponivel,
         'pode_chamar': disponivel and order.delivery_method == 'delivery'
+        and not (_dados_do_pedido_ifood(order) or {}).get('entrega_do_ifood')
         and (not chamado or status in ENCERRADOS_SEM_ENTREGA),
+        'codigo_coleta': _codigo_de_coleta(order),
         'chamado': chamado,
         'status': status,
         'status_texto': TEXTOS.get(status, status.replace('_', ' ').capitalize()) if chamado else '',

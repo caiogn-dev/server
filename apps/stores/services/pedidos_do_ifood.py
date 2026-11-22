@@ -343,6 +343,14 @@ def _registrar(pedido, **campos):
     pedido.save(update_fields=['metadata', 'updated_at'])
 
 
+def _evento_do_entregador_pedido_pela_loja(pedido, evento: dict) -> bool:
+    from apps.stores.services import entrega_ifood
+    completo = str(evento.get('fullCode') or '').upper()
+    meta = (pedido.metadata or {}).get(entrega_ifood.CHAVE_META) or {}
+    return completo in entrega_ifood.LOGISTICOS and bool(meta.get('quote_id')) \
+        and pedido.external_delivery_provider == PROVEDOR
+
+
 def aplicar_evento(store, evento: dict) -> bool:
     """Aplica um evento do polling. Levanta ErroDoIfood se precisa tentar de novo."""
     from apps.stores.models import StoreOrder
@@ -426,6 +434,11 @@ def aplicar_evento(store, evento: dict) -> bool:
                             'resultado_motivo': str(resultado.get('reason') or ''),
                             'resolvida_em': agora.isoformat()})
             _registrar(pedido, disputa=disputa)
+    elif _evento_do_entregador_pedido_pela_loja(pedido, evento):
+        # Mesmo app nos dois pollings (homologação): o evento do entregador
+        # que a loja pediu (requestDriver) pode chegar por aqui.
+        from apps.stores.services import entrega_ifood
+        return entrega_ifood.aplicar_evento(evento)
     else:
         return False
     from apps.stores.services import realtime_service

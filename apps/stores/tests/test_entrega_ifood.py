@@ -181,7 +181,8 @@ class ChamarEntregadorTest(Base):
             return respostas[metodo]
         with mock.patch.object(ent.ifood_oauth, 'api', side_effect=falso):
             ent.chamar(pedido)
-        return chamadas
+        # o GET de detalhe (pickupCode) vem depois e não é a criação da entrega
+        return [c for c in chamadas if not c[1].startswith('/order/')]
 
     def test_pedido_pago_online_vai_sem_pagamento_e_com_o_cliente(self):
         pedido = self._pedido()
@@ -265,7 +266,8 @@ class EventosTest(Base):
 
     def test_entregador_alocado_atualiza_o_status_da_entrega(self):
         pedido = self._pedido_chamado()
-        self.assertTrue(ent.aplicar_evento(self._evento('REQUEST_DRIVER_SUCCESS')))
+        with mock.patch.object(ent.ifood_oauth, 'api', return_value={}):
+            self.assertTrue(ent.aplicar_evento(self._evento('REQUEST_DRIVER_SUCCESS')))
         pedido.refresh_from_db()
         self.assertEqual(pedido.external_delivery_status, 'REQUEST_DRIVER_SUCCESS')
 
@@ -525,3 +527,162 @@ class PainelDoPedidoTest(Base):
         c.force_authenticate(intruso)
         r = c.get(f'/api/v1/stores/orders/{pedido.id}/entrega-ifood/')
         self.assertEqual(r.status_code, 404)
+
+
+IFOOD_ORDER = 'b1f2c3d4-0000-4000-8000-00000000abcd'
+
+
+def _pedido_do_ifood_meta(entrega_do_ifood=False, coleta='1234'):
+    return {'source': 'ifood', 'ifood': {
+        'order_id': IFOOD_ORDER, 'entrega_do_ifood': entrega_do_ifood, 'codigo_coleta': coleta,
+        'quem_entrega': 'entregador do iFood' if entrega_do_ifood else 'entrega da loja',
+    }}
+
+
+@override_settings(**CREDENCIAIS)
+class PedidoDoIfoodComEntregaPropriaTest(Base):
+    """Checklist Shipping, cenário 2: pedido feito DENTRO do iFood com entrega
+    própria da loja — a loja pede o entregador iFood pelo orderId do iFood
+    (deliveryAvailabilities → requestDriver {quoteId}), nunca criando pedido
+    externo."""
+
+    def _pedido_ifood(self, **campos):
+        dados = dict(source='ifood', metadata=_pedido_do_ifood_meta(), customer_phone='')
+        dados.update(campos)
+        return self._pedido(**dados)
+
+    def _chamar(self, pedido):
+        chamadas = []
+
+        def falso(app, metodo, caminho, corpo=None, **kw):
+            chamadas.append((metodo, caminho, corpo))
+            if caminho.endswith('/deliveryAvailabilities'):
+                return COTACAO
+            if caminho.endswith('/requestDriver'):
+                return {}
+            if caminho.startswith('/order/v1.0/orders/'):
+                return {'delivery': {'pickupCode': '1234'}}
+            raise AssertionError(f'chamada inesperada {metodo} {caminho}')
+        with mock.patch.object(ent.ifood_oauth, 'api', side_effect=falso):
+            ent.chamar(pedido)
+        return chamadas
+
+    def test_cota_e_pede_entregador_pelo_order_id_do_ifood(self):
+        pedido = self._pedido_ifood()
+        chamadas = self._chamar(pedido)
+        caminhos = [(m, c) for m, c, _ in chamadas]
+        self.assertIn(('GET', f'/shipping/v1.0/orders/{IFOOD_ORDER}/deliveryAvailabilities'), caminhos)
+        self.assertIn(('POST', f'/shipping/v1.0/orders/{IFOOD_ORDER}/requestDriver'), caminhos)
+        corpo = next(b for m, c, b in chamadas if c.endswith('/requestDriver'))
+        self.assertEqual(corpo, {'quoteId': 'quote-1'})
+        self.assertFalse(any(c.endswith('/orders') and m == 'POST' for m, c, _ in chamadas),
+                         'pedido do iFood não pode virar pedido externo')
+
+    def test_guarda_a_entrega_no_pedido(self):
+        pedido = self._pedido_ifood()
+        self._chamar(pedido)
+        pedido.refresh_from_db()
+        self.assertEqual(pedido.external_delivery_provider, 'ifood')
+        self.assertEqual(pedido.external_delivery_id, IFOOD_ORDER)
+        self.assertEqual(pedido.external_delivery_status, 'REQUESTED')
+        self.assertEqual(pedido.metadata['entrega_ifood']['valor'], '9.90')
+        # o metadata do pedido do iFood continua lá
+        self.assertEqual(pedido.metadata['ifood']['order_id'], IFOOD_ORDER)
+
+    def test_pedido_que_o_ifood_ja_entrega_nao_chama(self):
+        pedido = self._pedido_ifood(metadata=_pedido_do_ifood_meta(entrega_do_ifood=True))
+        with mock.patch.object(ent.ifood_oauth, 'api') as api:
+            with self.assertRaises(ent.EntregaIfoodRecusada):
+                ent.chamar(pedido)
+        api.assert_not_called()
+
+    def test_estado_deixa_chamar_e_mostra_o_codigo_de_coleta(self):
+        pedido = self._pedido_ifood()
+        e = ent.estado(pedido)
+        self.assertTrue(e['pode_chamar'])
+        self.assertEqual(e['codigo_coleta'], '1234')
+
+    def test_estado_de_pedido_que_o_ifood_ja_entrega_nao_deixa_chamar(self):
+        pedido = self._pedido_ifood(metadata=_pedido_do_ifood_meta(entrega_do_ifood=True),
+                                    external_delivery_provider='ifood', external_delivery_id=IFOOD_ORDER)
+        e = ent.estado(pedido)
+        self.assertFalse(e['pode_chamar'])
+        self.assertEqual(e['codigo_coleta'], '1234')
+
+    def test_cancelar_usa_cancel_request_driver(self):
+        pedido = self._pedido_ifood(external_delivery_provider='ifood', external_delivery_id=IFOOD_ORDER,
+                                    external_delivery_status='REQUESTED')
+        motivos = ent.motivos_de_cancelamento(pedido)
+        self.assertEqual(len(motivos), 1)
+        with mock.patch.object(ent.ifood_oauth, 'api', return_value={}) as api:
+            ent.cancelar(pedido, codigo=motivos[0]['codigo'])
+        self.assertEqual(api.call_args.args[1:3], ('POST', f'/shipping/v1.0/orders/{IFOOD_ORDER}/cancelRequestDriver'))
+        pedido.refresh_from_db()
+        self.assertEqual(pedido.external_delivery_status, 'CANCELLATION_REQUESTED')
+
+    def test_evento_do_entregador_chega_pelo_polling_de_pedidos(self):
+        """No modo homologação os dois apps são o mesmo: o evento logístico pode
+        cair no polling de PEDIDOS — ele repassa para a entrega."""
+        from apps.stores.services import pedidos_do_ifood
+        meta = {**_pedido_do_ifood_meta(), 'entrega_ifood': {'quote_id': 'quote-1'}}
+        pedido = self._pedido_ifood(external_delivery_provider='ifood', external_delivery_id=IFOOD_ORDER,
+                                    external_delivery_status='REQUESTED', metadata=meta)
+        evento = {'id': 'ev-x', 'code': 'RDS', 'fullCode': 'REQUEST_DRIVER_SUCCESS', 'orderId': IFOOD_ORDER}
+        self.assertTrue(pedidos_do_ifood.aplicar_evento(self.store, evento))
+        pedido.refresh_from_db()
+        self.assertEqual(pedido.external_delivery_status, 'REQUEST_DRIVER_SUCCESS')
+
+
+@override_settings(**CREDENCIAIS)
+class CodigoDeColetaDoPedidoExternoTest(Base):
+    """Checklist Shipping, cenário 3: mostrar o pickupCode também no pedido
+    criado pelo create order — ele vem nos detalhes do pedido no iFood."""
+
+    def test_chamar_busca_e_guarda_o_pickup_code(self):
+        pedido = self._pedido()
+
+        def falso(app, metodo, caminho, corpo=None, **kw):
+            if caminho.endswith('/deliveryAvailabilities'):
+                return COTACAO
+            if metodo == 'POST':
+                return {'id': 'entrega-1', 'trackingUrl': ''}
+            if caminho == '/order/v1.0/orders/entrega-1':
+                return {'delivery': {'pickupCode': '4321'}}
+            raise AssertionError(caminho)
+        with mock.patch.object(ent.ifood_oauth, 'api', side_effect=falso):
+            ent.chamar(pedido)
+        pedido.refresh_from_db()
+        self.assertEqual(ent.estado(pedido)['codigo_coleta'], '4321')
+
+    def test_sem_detalhe_ainda_o_chamado_continua_valendo(self):
+        pedido = self._pedido()
+
+        def falso(app, metodo, caminho, corpo=None, **kw):
+            if caminho.endswith('/deliveryAvailabilities'):
+                return COTACAO
+            if metodo == 'POST':
+                return {'id': 'entrega-1', 'trackingUrl': ''}
+            raise IfoodRecusou('404', 404, '')
+        with mock.patch.object(ent.ifood_oauth, 'api', side_effect=falso):
+            ent.chamar(pedido)
+        pedido.refresh_from_db()
+        self.assertEqual(pedido.external_delivery_id, 'entrega-1')
+        self.assertEqual(ent.estado(pedido)['codigo_coleta'], '')
+
+    def test_evento_busca_o_pickup_code_que_faltava(self):
+        pedido = self._pedido(external_delivery_provider='ifood', external_delivery_id='entrega-1',
+                              external_delivery_status='REQUESTED')
+        evento = {'id': 'ev-1', 'code': 'RDS', 'fullCode': 'REQUEST_DRIVER_SUCCESS', 'orderId': 'entrega-1'}
+        with mock.patch.object(ent.ifood_oauth, 'api', return_value={'delivery': {'pickupCode': '9999'}}):
+            ent.aplicar_evento(evento)
+        pedido.refresh_from_db()
+        self.assertEqual(ent.estado(pedido)['codigo_coleta'], '9999')
+
+    def test_evento_logistico_nao_mexe_no_status_do_pedido_do_ifood(self):
+        meta = {**_pedido_do_ifood_meta(), 'entrega_ifood': {'quote_id': 'quote-1'}}
+        self._pedido(source='ifood', metadata=meta, status='ready', external_delivery_provider='ifood',
+                     external_delivery_id='entrega-1', external_delivery_status='REQUESTED')
+        evento = {'id': 'ev-2', 'code': 'DIT', 'fullCode': 'DELIVERY_IN_TRANSIT', 'orderId': 'entrega-1'}
+        with mock.patch('apps.stores.services.order_service.OrderService.update_status') as mudar:
+            ent.aplicar_evento(evento)
+        mudar.assert_not_called()
