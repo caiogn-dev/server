@@ -62,7 +62,8 @@ class PagarmeHandler(BaseHandler):
         pagamento = (
             StorePayment.objects
             .filter(external_id__in=[e for e in (external_id, order_id) if e],
-                    payment_method=StorePayment.PaymentMethod.VOUCHER)
+                    payment_method__in=[StorePayment.PaymentMethod.VOUCHER,
+                                        StorePayment.PaymentMethod.CREDIT_CARD])
             .select_related('order', 'gateway', 'store')
             .first()
         )

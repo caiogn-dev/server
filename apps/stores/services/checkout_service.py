@@ -1717,6 +1717,99 @@ class CheckoutService:
         order.save(update_fields=['payment_status', 'updated_at'])
         return {'success': False, 'error': resultado.mensagem}
 
+    @staticmethod
+    def _cobrar_cartao_pagarme(order, payment_data: dict, amount=None) -> dict:
+        """Crédito pela Pagar.me — mesmo molde de `_cobrar_voucher`: a linha
+        de StorePayment nasce ANTES da chamada e `pending` não é recusa."""
+        from decimal import Decimal
+
+        import requests
+        from django.utils import timezone
+
+        from apps.stores.models import StoreOrder, StorePayment
+        from apps.stores.services import cartao_pagarme, pagarme_orders
+
+        if order is None:
+            return {'success': False, 'error': 'Pagamento com cartão exige um pedido.'}
+        gateway = cartao_pagarme.gateway_do_cartao(order.store)
+        if gateway is None:
+            return {'success': False, 'error': 'Esta loja não aceita cartão pelo app agora. Pague no PIX.'}
+        token = str(payment_data.get('card_token') or '').strip()
+        if not token:
+            return {'success': False, 'error': 'Os dados do cartão expiraram. Digite de novo, por favor.'}
+
+        valor = Decimal(str(amount if amount is not None else order.total))
+        pagamento = StorePayment.objects.create(
+            order=order, store=order.store, gateway=gateway,
+            payment_method=StorePayment.PaymentMethod.CREDIT_CARD,
+            status=StorePayment.PaymentStatus.PENDING,
+            amount=valor, external_reference=str(order.id),
+            payer_name=str(payment_data.get('holder_name') or '')[:255],
+        )
+        payload = cartao_pagarme.build_payload(
+            order, card_token=token,
+            holder_name=str(payment_data.get('holder_name') or ''),
+            holder_document=str(payment_data.get('holder_document') or ''),
+            total=valor,
+        )
+        try:
+            status_code, body = pagarme_orders.create_order(gateway.api_key, payload)
+        except requests.RequestException as erro:
+            logger.error('Pagar.me inacessível no cartão: %s', erro)
+            pagamento.status = StorePayment.PaymentStatus.FAILED
+            pagamento.error_message = 'rede'
+            pagamento.save()
+            return {'success': False, 'error': 'Não conseguimos falar com o banco agora. Tente de novo ou pague no PIX.'}
+
+        ok, status, external_id, motivo = pagarme_orders.interpret(status_code, body)
+        pagamento.external_id = external_id or ''
+        pagamento.gateway_response = body or {}
+
+        if ok and status == 'approved':
+            agora = timezone.now()
+            pagamento.status = StorePayment.PaymentStatus.COMPLETED
+            pagamento.paid_at = agora
+            pagamento.save()
+            order.payment_status = StoreOrder.PaymentStatus.PAID
+            order.payment_method = 'credit_card'
+            order.payment_id = external_id or ''
+            order.paid_at = agora
+            campos = ['payment_status', 'payment_method', 'payment_id', 'paid_at', 'updated_at']
+            if order.status in {
+                StoreOrder.OrderStatus.PENDING,
+                StoreOrder.OrderStatus.PROCESSING,
+                StoreOrder.OrderStatus.PAID,
+            }:
+                order.status = StoreOrder.OrderStatus.CONFIRMED
+                if not order.confirmed_at:
+                    order.confirmed_at = agora
+                campos += ['status', 'confirmed_at']
+            order.save(update_fields=campos)
+            try:
+                from apps.stores.services.loyalty_service import LoyaltyService
+                LoyaltyService.credit_order(order)
+            except Exception:
+                logger.warning('Falha ao creditar fidelidade do pedido %s', order.id, exc_info=True)
+            from apps.stores.services.cashback_service import CashbackService
+            CashbackService.credit_order(order)
+            return {'success': True, 'status': 'approved', 'payment_id': external_id,
+                    'payment_method': 'credit_card', 'requires_redirect': False}
+
+        if status == 'pending':
+            pagamento.save()
+            order.payment_method = 'credit_card'
+            order.payment_id = external_id or ''
+            order.save(update_fields=['payment_method', 'payment_id', 'updated_at'])
+            return {'success': True, 'status': 'pending', 'payment_id': external_id,
+                    'payment_method': 'credit_card', 'requires_redirect': False}
+
+        pagamento.status = StorePayment.PaymentStatus.FAILED
+        pagamento.error_message = cartao_pagarme.mensagem_de_recusa(motivo)
+        pagamento.save()
+        order.payment_status = StoreOrder.PaymentStatus.FAILED
+        order.save(update_fields=['payment_status', 'updated_at'])
+        return {'success': False, 'error': cartao_pagarme.mensagem_de_recusa(motivo)}
+
     #: Rótulo do pedido que não deve nada (resgate cobrindo tudo, retirada).
     SEM_COBRANCA = 'sem_cobranca'
 
@@ -1833,6 +1926,8 @@ class CheckoutService:
 
         if payment_method == 'voucher':
             return CheckoutService._cobrar_voucher(order, payment_data or {}, amount)
+        if payment_method in {'card', 'credit_card'} and (payment_data or {}).get('gateway') == 'pagarme':
+            return CheckoutService._cobrar_cartao_pagarme(order, payment_data or {}, amount)
 
         credentials = CheckoutService.get_payment_credentials(target_store)
         if not credentials:

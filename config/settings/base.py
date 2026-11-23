@@ -718,6 +718,10 @@ BILLING_PIX_ENABLED = os.environ.get('BILLING_PIX_ENABLED', 'false').lower() == 
 # Comissão da plataforma sobre o pagamento da loja conectada por OAuth, em %.
 # Default 0 = desligada: nenhuma loja existente muda de comportamento ao subir
 # esta versão. Só vira dinheiro quando alguém escrever o valor no ambiente.
+#: Loja cuja Pagar.me cobra o cartão das lojas da conta da plataforma
+#: (`usa_gateway_da_plataforma`) — a do dono. Ver cartao_pagarme.
+PAGARME_LOJA_DA_PLATAFORMA = os.environ.get('PAGARME_LOJA_DA_PLATAFORMA', 'ce-saladas')
+
 PLATFORM_APPLICATION_FEE_PERCENT = Decimal(
     os.environ.get('PLATFORM_APPLICATION_FEE_PERCENT', '0') or '0'
 )

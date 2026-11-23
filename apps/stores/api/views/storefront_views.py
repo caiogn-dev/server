@@ -255,8 +255,15 @@ def build_store_payment_config(store):
     if marcas_manuais and whatsapp_da_loja:
         enabled_methods.append('voucher_link')
 
+    # Cartão de crédito pela Pagar.me — só o APP usa (tokeniza com a chave
+    # pública). NÃO entra em enabled_methods: o cardápio web cobra cartão pelo
+    # Mercado Pago e ofereceria um cartão que morre no clique.
+    from apps.stores.services import cartao_pagarme
+    cartao = cartao_pagarme.config_publica(store)
+
     return {
         'enabled_methods': enabled_methods,
+        'cartao': cartao,
         'mercado_pago': {
             'public_key': public_key,
             'is_sandbox': bool(
