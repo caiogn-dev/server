@@ -407,6 +407,25 @@ def comissao_para_preferencia(store, valor):
     return float(comissao) if comissao else None
 
 
+def tipo_do_cartao(payment_method, payment_payload):
+    """'debit_card' ou 'credit_card' para a Orders API.
+
+    A view do checkout troca debit_card por 'card' antes de chegar aqui, então
+    o tipo vem do payload do cartão (`payment_type`, ou o form_data do Brick);
+    o método bruto 'debit_card' ainda vale para quem chama o serviço direto.
+    """
+    payload = payment_payload if isinstance(payment_payload, dict) else {}
+    form = payload.get('form_data') or payload.get('formData') or {}
+    candidatos = [
+        payment_method,
+        payload.get('payment_type'),
+        payload.get('paymentType'),
+        form.get('payment_type') if isinstance(form, dict) else None,
+        form.get('paymentType') if isinstance(form, dict) else None,
+    ]
+    return 'debit_card' if 'debit_card' in candidatos else 'credit_card'
+
+
 def _com_comissao(payload, store, valor):
     """Acrescenta a comissão ao payload só quando ela existe."""
     comissao = comissao_da_plataforma(store, valor)

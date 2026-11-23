@@ -2063,7 +2063,7 @@ class CheckoutService:
                     or payment_payload.get('deviceId')
                     or payment_payload.get('device_session_id')
                 )
-                payment_type = 'debit_card' if payment_method == 'debit_card' else 'credit_card'
+                payment_type = mp_orders.tipo_do_cartao(payment_method, payment_payload)
                 order_payload = mp_orders.build_order_payload(
                     order,
                     card_token=card_token,

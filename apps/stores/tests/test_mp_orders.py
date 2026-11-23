@@ -223,3 +223,22 @@ class LimiteDoLogradouroTestCase(TestCase):
         self.order.save(update_fields=['delivery_address'])
         endereco = mp_orders.build_payer(self.order, 'maria@x.com', None)['address']
         self.assertEqual(endereco['street_name'], 'Rua A')
+
+
+class TestTipoDoCartao:
+    """A view converte debit_card em 'card' antes do serviço — o tipo do
+    cartão tem de vir do payload, senão todo débito ia ao MP como crédito."""
+
+    def test_debito_pelo_payload(self):
+        from apps.stores.services.mp_orders import tipo_do_cartao
+        assert tipo_do_cartao('card', {'payment_type': 'debit_card'}) == 'debit_card'
+        assert tipo_do_cartao('card', {'form_data': {'payment_type': 'debit_card'}}) == 'debit_card'
+
+    def test_debito_pelo_metodo_bruto(self):
+        from apps.stores.services.mp_orders import tipo_do_cartao
+        assert tipo_do_cartao('debit_card', {}) == 'debit_card'
+
+    def test_padrao_credito(self):
+        from apps.stores.services.mp_orders import tipo_do_cartao
+        assert tipo_do_cartao('card', {}) == 'credit_card'
+        assert tipo_do_cartao('card', {'payment_type': 'qualquer'}) == 'credit_card'
