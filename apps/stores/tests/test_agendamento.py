@@ -159,3 +159,37 @@ class TestEncomendaComAntecedencia:
         _config(loja, dias_de_antecedencia=1)
         r = APIClient().get(f'/api/v1/public/{loja.slug}/availability/')
         assert r.data['agendamento']['dias_de_antecedencia'] == 1
+
+
+class TestDataFutura:
+    """Ivoneth (23/11): festa se encomenda com semanas de antecedência, e a
+    vitrine só oferecia os próximos 7 dias — fixo no código, sem o dono mudar.
+    `dias` = quantos dias com horário a vitrine oferece (1 a 90)."""
+    agora = _agora('2026-10-21T09:00')
+
+    def test_dono_escolhe_ate_quando_aceita(self, loja):
+        _config(loja, dias=60)
+        assert config_do_agendamento(loja)['dias'] == 60
+        dias = agenda(loja, self.agora)
+        assert len(dias) == 60
+        assert dias[-1]['data'] > '2026-12-31'  # ~2 meses de dias úteis
+
+    def test_horizonte_com_antecedencia(self, loja):
+        _config(loja, dias=30, dias_de_antecedencia=2)
+        dias = agenda(loja, self.agora)
+        assert dias[0]['data'] == '2026-10-23' and len(dias) == 30
+
+    @pytest.mark.parametrize('valor', [0, 91, -1, '60', True, None])
+    def test_horizonte_invalido_volta_aos_7(self, loja, valor):
+        _config(loja, dias=valor)
+        assert config_do_agendamento(loja)['dias'] == 7
+
+    def test_availability_leva_o_horizonte(self, loja):
+        _config(loja, dias=45)
+        r = APIClient().get(f'/api/v1/public/{loja.slug}/availability/')
+        assert len(r.data['agendamento']['dias']) == 45
+        assert r.data['agendamento']['horizonte'] == 45
+
+    def test_checkout_aceita_data_longe(self, loja):
+        _config(loja, dias=60)
+        assert problema_da_faixa(loja, date(2026, 12, 15), '10:00-11:00', self.agora) is None

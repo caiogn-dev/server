@@ -243,6 +243,8 @@ def public_store_availability(request, slug):
             'intervalo': config_do_agendamento(store)['intervalo'],
             # >0 = encomenda: a vitrine obriga a agendar e avisa no produto.
             'dias_de_antecedencia': config_do_agendamento(store)['dias_de_antecedencia'],
+            # Até quantos dias a vitrine oferece: acima de 2 semanas ela vira calendário.
+            'horizonte': config_do_agendamento(store)['dias'],
             'dias': agenda(store, now),
         },
     })

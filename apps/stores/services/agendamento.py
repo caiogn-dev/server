@@ -24,6 +24,9 @@ from apps.stores.services.horario_de_funcionamento import dia_esta_aberto, turno
 INTERVALOS = (30, 60, 90, 120)
 PADRAO = {'intervalo': 60, 'antecedencia': 60, 'dias': 7, 'dias_de_antecedencia': 0}
 MAX_DIAS_DE_ANTECEDENCIA = 30
+# Quantos dias com horário a vitrine oferece. Banqueteria encomenda festa com
+# semanas de antecedência (Ivoneth, 23/11); 7 continua o padrão do delivery.
+MAX_HORIZONTE = 90
 DIAS_DA_SEMANA = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
 
 
@@ -36,6 +39,9 @@ def config_do_agendamento(store) -> dict:
     antecedencia = bruto.get('antecedencia')
     if isinstance(antecedencia, int) and not isinstance(antecedencia, bool) and 0 <= antecedencia <= 24 * 60:
         cfg['antecedencia'] = antecedencia
+    horizonte = bruto.get('dias')
+    if isinstance(horizonte, int) and not isinstance(horizonte, bool) and 1 <= horizonte <= MAX_HORIZONTE:
+        cfg['dias'] = horizonte
     dias = bruto.get('dias_de_antecedencia')
     if isinstance(dias, int) and not isinstance(dias, bool) and 0 <= dias <= MAX_DIAS_DE_ANTECEDENCIA:
         cfg['dias_de_antecedencia'] = dias
@@ -131,7 +137,11 @@ def agenda(store, agora: datetime | None = None) -> list[dict]:
     agora = timezone.localtime(agora or timezone.now())
     cfg = config_do_agendamento(store)
     dias = []
-    for offset in range(cfg['dias'] + 1):
+    # Começa a contar no primeiro dia aceito: com 2 dias de antecedência e
+    # horizonte 30, são 30 dias com horário a partir de depois de amanhã.
+    # Varre até juntar `dias` dias com horário (loja fechada no fim de semana
+    # precisa de mais calendário); o teto evita loop numa loja que nunca abre.
+    for offset in range(cfg['dias_de_antecedencia'] + cfg['dias'] * 2 + 7):
         dia = agora.date() + timedelta(days=offset)
         faixas = faixas_do_dia(store, dia, agora)
         if faixas:
