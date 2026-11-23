@@ -399,6 +399,21 @@ def loja_para_o_publico(dados: dict, campos) -> dict:
     return publico
 
 
+def _loja_publica(store, dados=None):
+    """A loja como a vitrine vê: lista de permitidos + frete coerente.
+
+    "Entregas a partir de" = a base que a cotação cobra (`taxa_base`), não a
+    coluna `default_delivery_fee` — a Cê mostrava R$ 8 com R$ 7 até 3 km no
+    painel (23/11). Usado pela loja pública E pelo catálogo (o SSR do cardápio).
+    """
+    publico = loja_para_o_publico(
+        dados if dados is not None else StoreSerializer(store).data,
+        StorePublicView.CAMPOS_PUBLICOS,
+    )
+    publico['default_delivery_fee'] = str(DeliveryQuoteService.taxa_base(store))
+    return publico
+
+
 class StorePublicView(APIView):
     """Public store information endpoint."""
     permission_classes = [permissions.AllowAny]
@@ -427,10 +442,7 @@ class StorePublicView(APIView):
         # O painel chama esta mesma rota logado e precisa do cadastro completo.
         if request.user.is_authenticated and user_can_access_store(request.user, store):
             return Response(dados)
-        publico = loja_para_o_publico(dados, self.CAMPOS_PUBLICOS)
-        # "Entregas a partir de" = a base que a cotação cobra (ver taxa_base).
-        publico['default_delivery_fee'] = str(DeliveryQuoteService.taxa_base(store))
-        return Response(publico)
+        return Response(_loja_publica(store, dados))
 
 
 class StoreCatalogView(APIView):
@@ -503,7 +515,7 @@ class StoreCatalogView(APIView):
         payload = {
             # Sempre o recorte público: esta resposta é a mesma para todos e
             # entregava o metadata inteiro, com o token fiscal (03/10).
-            'store': loja_para_o_publico(StoreSerializer(store).data, StorePublicView.CAMPOS_PUBLICOS),
+            'store': _loja_publica(store),
             'categories': StoreCategorySerializer(categories, many=True).data,
             'products': StoreProductVitrineSerializer(all_products, many=True).data,
             'featured_products': StoreProductVitrineSerializer(featured_products, many=True).data,

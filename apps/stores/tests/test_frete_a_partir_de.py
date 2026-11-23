@@ -45,3 +45,11 @@ def test_app_config_mostra_a_mesma_base(loja):
 def test_loja_publica_mostra_a_mesma_base(loja):
     r = APIClient().get(f'/api/v1/stores/{loja.slug}/')
     assert Decimal(str(r.json()['default_delivery_fee'])) == Decimal('7')
+
+
+def test_catalogo_mostra_a_mesma_base(loja):
+    """O SSR do cardápio monta o topo a partir do /catalog/, não do /stores/<slug>/."""
+    from django.core.cache import cache
+    cache.delete(f'catalog:{loja.slug}')
+    r = APIClient().get(f'/api/v1/stores/{loja.slug}/catalog/')
+    assert Decimal(str(r.json()['store']['default_delivery_fee'])) == Decimal('7')
