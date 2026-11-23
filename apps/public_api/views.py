@@ -509,15 +509,12 @@ def public_marketplace(request):
 def public_marketplace_beneficios(request):
     """GET /api/v1/public/marketplace/beneficios/ — vantagens de cada loja do app.
 
-    O perfil do app é do marketplace: mostra, loja por loja, o cupom em
-    destaque (o mesmo do banner do cardápio), o cashback e a fidelidade. Logado,
-    vem o progresso e o saldo da própria pessoa, e o cupom de primeira compra
-    some onde ela já comprou (mesma regra do banner, 28/10). Por pessoa, então
-    nunca cacheado.
+    O perfil do app é do marketplace: mostra, loja por loja, o cashback e a
+    fidelidade. Logado, vem o progresso e o saldo da própria pessoa; por
+    pessoa, então nunca cacheado. Cupom não sai aqui: quem tem o código digita
+    na sacola (dono, 23/11).
     """
-    from apps.stores import billing
     from apps.stores.api.views.loyalty_views import _user_phone, resolve_loyalty_status_for_user
-    from apps.stores.models import StoreCoupon
     from apps.stores.services.cashback_service import CashbackService
     from apps.stores.services.loyalty_service import LoyaltyService
 
@@ -525,22 +522,6 @@ def public_marketplace_beneficios(request):
     phone = _user_phone(user) if user else ''
     itens = []
     for s, logo in _lojas_do_marketplace():
-        cupons = []
-        if billing.plan_allows(s, 'coupon_banner'):
-            for c in StoreCoupon.objects.filter(store=s, is_active=True, is_featured=True).order_by('-created_at'):
-                ok, _ = c.is_valid(user=user, customer_phone=phone or None)
-                if not ok:
-                    continue
-                cupons.append({
-                    'code': c.code,
-                    'description': c.description,
-                    'discount_type': c.discount_type,
-                    'discount_value': str(c.discount_value),
-                    'min_purchase': str(c.min_purchase),
-                    'first_order_only': c.first_order_only,
-                    'valid_until': c.valid_until.isoformat(),
-                })
-
         fidelidade = None
         threshold, ligada = LoyaltyService._config(s)
         if ligada:
@@ -568,7 +549,6 @@ def public_marketplace_beneficios(request):
             'nome': s.name,
             'logo_url': logo,
             'cor': s.primary_color or '',
-            'cupons': cupons,
             'fidelidade': fidelidade,
             'cashback': cashback,
         })
