@@ -431,6 +431,67 @@ def owner_signup(request):
 
 
 @cache_publico(300)
+@cache_publico(60)
+@api_view(['GET'])
+@permission_classes([AllowAny])
+@throttle_classes([_PublicReadThrottle])
+def public_marketplace(request):
+    """GET /api/v1/public/marketplace/ — vitrine de lojas do app Cardapidex.
+
+    Entra loja ativa e pronta para vender: com logo, cidade e produto ativo.
+    `metadata.fora_do_marketplace` tira a loja da vitrine sem desativá-la.
+    Abertas primeiro; dentro de cada grupo, as com mais produtos.
+    """
+    from django.db.models import Avg, Count, Q
+    from apps.stores.services.delivery_quote_service import DeliveryQuoteService
+
+    lojas = (
+        Store.objects.filter(status='active')
+        .exclude(city='')
+        .annotate(
+            total_produtos=Count('products', filter=Q(
+                products__is_active=True,
+                products__status=StoreProduct.ProductStatus.ACTIVE), distinct=True),
+            nota=Avg('reviews__rating', filter=Q(reviews__is_public=True)),
+            total_avaliacoes=Count('reviews', filter=Q(reviews__is_public=True), distinct=True),
+        )
+        .filter(total_produtos__gt=0)
+    )
+    itens = []
+    for s in lojas:
+        # Filtro em Python: `exclude(metadata__chave=True)` no JSON também
+        # descarta a loja que nem tem a chave (NOT NULL vira NULL no SQL).
+        if (s.metadata or {}).get('fora_do_marketplace') is True:
+            continue
+        logo = s.get_logo_url()
+        if not logo:
+            continue
+        itens.append({
+            'slug': s.slug,
+            'nome': s.name,
+            'descricao': s.tagline or '',
+            'logo_url': logo,
+            'capa_url': s.get_banner_url() or '',
+            'cor': s.primary_color or '',
+            'cidade': s.city,
+            'estado': s.state,
+            'tipo': s.store_type,
+            'aberta': bool(s.is_open()),
+            'entrega': bool(s.delivery_enabled),
+            'retirada': bool(s.pickup_enabled),
+            'frete': str(DeliveryQuoteService.taxa_base(s)),
+            'frete_gratis_a_partir': str(s.free_delivery_threshold) if s.free_delivery_threshold else None,
+            'pedido_minimo': str(s.min_order_value),
+            'prazo_min': s.prazo_entrega_min,
+            'prazo_max': s.prazo_entrega_max,
+            'nota': round(float(s.nota), 1) if s.nota is not None else None,
+            'total_avaliacoes': s.total_avaliacoes,
+            'total_produtos': s.total_produtos,
+        })
+    itens.sort(key=lambda i: (not i['aberta'], -i['total_produtos'], i['nome']))
+    return Response({'lojas': itens})
+
+
 @api_view(['GET'])
 @permission_classes([AllowAny])
 @throttle_classes([_PublicReadThrottle])

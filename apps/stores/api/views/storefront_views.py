@@ -73,7 +73,7 @@ from apps.stores.models import (
 from apps.users.models import UserAddress
 from apps.stores.services import cart_service, checkout_service
 from apps.stores import billing as billing_service
-from apps.stores.services.delivery_quote_service import delivery_quote_service
+from apps.stores.services.delivery_quote_service import DeliveryQuoteService, delivery_quote_service
 from apps.stores.services.geo import geo_service
 from apps.stores.services.realtime_service import broadcast_order_event
 from apps.stores.services.frete_promocional import (
@@ -427,7 +427,10 @@ class StorePublicView(APIView):
         # O painel chama esta mesma rota logado e precisa do cadastro completo.
         if request.user.is_authenticated and user_can_access_store(request.user, store):
             return Response(dados)
-        return Response(loja_para_o_publico(dados, self.CAMPOS_PUBLICOS))
+        publico = loja_para_o_publico(dados, self.CAMPOS_PUBLICOS)
+        # "Entregas a partir de" = a base que a cotação cobra (ver taxa_base).
+        publico['default_delivery_fee'] = str(DeliveryQuoteService.taxa_base(store))
+        return Response(publico)
 
 
 class StoreCatalogView(APIView):
@@ -670,7 +673,8 @@ class StoreAppConfigView(APIView):
                     'lat': float(store.latitude) if store.latitude is not None else None,
                     'lng': float(store.longitude) if store.longitude is not None else None,
                 },
-                'default_delivery_fee': float(store.default_delivery_fee or 0),
+                # Mesma base da cotação (metadata.delivery_base_fee), não a coluna antiga.
+                'default_delivery_fee': float(DeliveryQuoteService.taxa_base(store)),
                 'min_order_value': float(store.min_order_value or 0),
                 'free_delivery_threshold': float(store.free_delivery_threshold or 0) if store.free_delivery_threshold else None,
                 'max_distance_km': float(metadata.get('max_delivery_distance_km', 20)),

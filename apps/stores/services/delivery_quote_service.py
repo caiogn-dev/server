@@ -39,6 +39,21 @@ class DeliveryQuoteService:
     """Resolve and normalize delivery quotes from every supported input."""
 
     @staticmethod
+    def taxa_base(store: Store) -> Decimal:
+        """A taxa dentro do raio fixo — o "a partir de" da vitrine.
+
+        `metadata.delivery_base_fee` é o que o painel grava; a coluna
+        `default_delivery_fee` fica de reserva para loja sem fórmula.
+        Vitrine e cotação leem DAQUI para não discordarem (Cê: topo dizia
+        R$ 8, cotação cobrava R$ 7 — 23/11).
+        """
+        metadata = store.metadata or {}
+        valor = metadata.get('delivery_base_fee')
+        if valor in (None, ''):
+            valor = store.default_delivery_fee or '9.00'
+        return Decimal(str(valor))
+
+    @staticmethod
     def calculate_dynamic_fee(store: Store, distance_km: Decimal = None, subtotal: Decimal = None) -> dict:
         """FONTE ÚNICA da matemática de taxa dinâmica por distância.
 
@@ -56,7 +71,7 @@ class DeliveryQuoteService:
         `apps.stores.services.frete_promocional`.
         """
         metadata = store.metadata or {}
-        base_fee = Decimal(str(metadata.get('delivery_base_fee', store.default_delivery_fee or '9.00')))
+        base_fee = DeliveryQuoteService.taxa_base(store)
         fee_per_km = Decimal(str(metadata.get('delivery_fee_per_km', '1.00')))
         flat_km = Decimal(str(metadata.get('delivery_flat_km') or metadata.get('delivery_free_km') or '4.0'))
         # `delivery_max_distance` é a chave que o painel (StoreSettingsPage) grava;
