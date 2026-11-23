@@ -625,6 +625,11 @@ def processar_eventos() -> dict:
     resultado = {'eventos': 0, 'falhas': 0}
     if not ifood_oauth.esta_configurado(APP):
         return resultado
+    # Mesmo app nos dois lados (modo homologação): o polling daqui confirmaria
+    # o PLACED de pedido novo antes do polling de pedidos ler. Lá os eventos
+    # logísticos já são repassados para esta entrega.
+    if ifood_oauth.credenciais(APP)[0] == ifood_oauth.credenciais('pedidos')[0]:
+        return resultado
     merchants = list(
         StoreIfoodIntegration.objects.filter(conectado=True).exclude(merchant_id='')
         .values_list('merchant_id', flat=True)[:100]

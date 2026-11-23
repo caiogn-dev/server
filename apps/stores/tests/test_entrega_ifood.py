@@ -726,3 +726,16 @@ class EntregaExternaNoPollingDePedidosTest(Base):
             self.store, {'id': 'e3', 'code': 'CFM', 'fullCode': 'CONFIRMED', 'orderId': 'ext-1'})
         pedido.refresh_from_db()
         self.assertEqual(pedido.external_delivery_status, 'REQUESTED')
+
+
+@override_settings(IFOOD_HOMOLOGACAO_CLIENT_ID='app-teste', IFOOD_HOMOLOGACAO_CLIENT_SECRET='s')
+class PollingDeEntregasComCredencialUnicaTest(Base):
+    """Modo homologação: pedidos e entregas usam o MESMO app. O polling de
+    entregas confirmava o PLACED de pedido novo e o pedido nunca entrava no
+    painel (medido 22/11, pedido de teste 6826). O polling de pedidos já
+    repassa os eventos logísticos — o de entregas fica parado."""
+
+    def test_nao_consulta_nem_confirma_nada(self):
+        self._pedido(source='web', external_delivery_provider='ifood', external_delivery_id='ext-1')
+        with mock.patch.object(ent.ifood_oauth, 'api', side_effect=AssertionError('não chama o iFood')):
+            self.assertEqual(ent.processar_eventos()['eventos'], 0)
