@@ -53,6 +53,8 @@ def whatsapp_verification_view(request):
 
 _ADMIN_URL = getattr(settings, 'ADMIN_URL', 'django-admin/')
 
+from apps.stores.api.webhook_ifood_view import webhook_ifood_view  # noqa: E402
+
 urlpatterns = [
     path(_ADMIN_URL, admin.site.urls),
 
@@ -122,6 +124,10 @@ urlpatterns = [
 
     # Unified Webhooks v1 (centralized handlers)
     # Meta WhatsApp API sends webhooks WITHOUT trailing slash for verification
+    # iFood: view próprio (assinatura do body bruto + resposta do KEEPALIVE com
+    # merchantIds) — antes do dispatcher genérico, que pegaria <provider>.
+    path('webhooks/v1/ifood/', webhook_ifood_view, name='webhook_ifood'),
+    path('webhooks/v1/ifood', webhook_ifood_view, name='webhook_ifood_no_slash'),
     path('webhooks/v1/', include('apps.webhooks.urls')),
     path('webhooks/payments/mercadopago', MercadoPagoWebhookView.as_view(), name='mercadopago_webhook_no_slash'),
     # Alias: URL cadastrada no painel do MP (Qualidade da Integração, 18/jul).

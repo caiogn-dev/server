@@ -887,3 +887,17 @@ def buscar_eventos_entrega_ifood():
             except Exception:
                 logger.exception('ifood: reconferir %s quebrou', integracao.store.slug)
     return entrega_ifood.processar_eventos()
+
+
+@shared_task(name='apps.stores.tasks.evento_do_webhook_ifood', bind=True, ignore_result=True,
+             max_retries=5, default_retry_delay=20)
+def evento_do_webhook_ifood(self, app, evento):
+    """Evento que chegou pelo webhook do iFood (o view responde 202 e enfileira)."""
+    from apps.stores.services import webhook_ifood
+
+    try:
+        webhook_ifood.processar(app, evento)
+    except Exception as exc:
+        logger.warning('ifood webhook: evento %s falhou (%s/%s): %s',
+                       evento.get('id'), self.request.retries + 1, self.max_retries, exc)
+        raise self.retry(exc=exc)
