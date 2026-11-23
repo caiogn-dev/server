@@ -25,6 +25,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db.models import Prefetch
 import logging
+from decimal import Decimal
 from django.conf import settings
 from apps.stores.models import Store, StoreCategory, StoreProduct, StoreCombo, StoreProductVariant
 from .models import Lead
@@ -430,20 +431,11 @@ def owner_signup(request):
     }, status=status.HTTP_201_CREATED)
 
 
-@cache_publico(300)
-@cache_publico(60)
-@api_view(['GET'])
-@permission_classes([AllowAny])
-@throttle_classes([_PublicReadThrottle])
-def public_marketplace(request):
-    """GET /api/v1/public/marketplace/ — vitrine de lojas do app Cardapidex.
-
-    Entra loja ativa e pronta para vender: com logo, cidade e produto ativo.
-    `metadata.fora_do_marketplace` tira a loja da vitrine sem desativá-la.
-    Abertas primeiro; dentro de cada grupo, as com mais produtos.
-    """
+def _lojas_do_marketplace():
+    """(loja, logo) das lojas que aparecem no app: ativa, com cidade, logo e
+    produto ativo, sem `metadata.fora_do_marketplace`. Fonte única da vitrine
+    e dos benefícios — as duas telas não podem discordar de quem está no app."""
     from django.db.models import Avg, Count, Q
-    from apps.stores.services.delivery_quote_service import DeliveryQuoteService
 
     lojas = (
         Store.objects.filter(status='active')
@@ -457,15 +449,32 @@ def public_marketplace(request):
         )
         .filter(total_produtos__gt=0)
     )
-    itens = []
     for s in lojas:
         # Filtro em Python: `exclude(metadata__chave=True)` no JSON também
         # descarta a loja que nem tem a chave (NOT NULL vira NULL no SQL).
         if (s.metadata or {}).get('fora_do_marketplace') is True:
             continue
         logo = s.get_logo_url()
-        if not logo:
-            continue
+        if logo:
+            yield s, logo
+
+
+@cache_publico(300)
+@cache_publico(60)
+@api_view(['GET'])
+@permission_classes([AllowAny])
+@throttle_classes([_PublicReadThrottle])
+def public_marketplace(request):
+    """GET /api/v1/public/marketplace/ — vitrine de lojas do app Cardapidex.
+
+    Entra loja ativa e pronta para vender: com logo, cidade e produto ativo.
+    `metadata.fora_do_marketplace` tira a loja da vitrine sem desativá-la.
+    Abertas primeiro; dentro de cada grupo, as com mais produtos.
+    """
+    from apps.stores.services.delivery_quote_service import DeliveryQuoteService
+
+    itens = []
+    for s, logo in _lojas_do_marketplace():
         itens.append({
             'slug': s.slug,
             'nome': s.name,
@@ -491,6 +500,79 @@ def public_marketplace(request):
     itens.sort(key=lambda i: (not i['aberta'], -i['total_produtos'], i['nome']))
     return Response({'lojas': itens})
 
+
+
+@nunca_cachear
+@api_view(['GET'])
+@permission_classes([AllowAny])
+@throttle_classes([_PublicReadThrottle])
+def public_marketplace_beneficios(request):
+    """GET /api/v1/public/marketplace/beneficios/ — vantagens de cada loja do app.
+
+    O perfil do app é do marketplace: mostra, loja por loja, o cupom em
+    destaque (o mesmo do banner do cardápio), o cashback e a fidelidade. Logado,
+    vem o progresso e o saldo da própria pessoa, e o cupom de primeira compra
+    some onde ela já comprou (mesma regra do banner, 28/10). Por pessoa, então
+    nunca cacheado.
+    """
+    from apps.stores import billing
+    from apps.stores.api.views.loyalty_views import _user_phone, resolve_loyalty_status_for_user
+    from apps.stores.models import StoreCoupon
+    from apps.stores.services.cashback_service import CashbackService
+    from apps.stores.services.loyalty_service import LoyaltyService
+
+    user = request.user if request.user.is_authenticated else None
+    phone = _user_phone(user) if user else ''
+    itens = []
+    for s, logo in _lojas_do_marketplace():
+        cupons = []
+        if billing.plan_allows(s, 'coupon_banner'):
+            for c in StoreCoupon.objects.filter(store=s, is_active=True, is_featured=True).order_by('-created_at'):
+                ok, _ = c.is_valid(user=user, customer_phone=phone or None)
+                if not ok:
+                    continue
+                cupons.append({
+                    'code': c.code,
+                    'description': c.description,
+                    'discount_type': c.discount_type,
+                    'discount_value': str(c.discount_value),
+                    'min_purchase': str(c.min_purchase),
+                    'first_order_only': c.first_order_only,
+                    'valid_until': c.valid_until.isoformat(),
+                })
+
+        fidelidade = None
+        threshold, ligada = LoyaltyService._config(s)
+        if ligada:
+            _, plural = LoyaltyService.item_labels(s)
+            status = resolve_loyalty_status_for_user(s, user) if user else {}
+            fidelidade = {
+                'threshold': threshold,
+                'item_label_plural': plural,
+                'progresso': int(status.get('progress') or 0),
+                'premios': int(status.get('available_rewards') or 0),
+            }
+
+        cashback = None
+        if CashbackService.is_enabled(s):
+            saldo = CashbackService.balance(s, phone, True) if phone else Decimal('0.00')
+            vence = CashbackService.expires_next(s, phone, True) if phone else None
+            cashback = {
+                'percent': float(CashbackService.percent(s)),
+                'saldo': str(saldo),
+                'vence': vence.isoformat() if vence else None,
+            }
+
+        itens.append({
+            'slug': s.slug,
+            'nome': s.name,
+            'logo_url': logo,
+            'cor': s.primary_color or '',
+            'cupons': cupons,
+            'fidelidade': fidelidade,
+            'cashback': cashback,
+        })
+    return Response({'lojas': itens})
 
 @api_view(['GET'])
 @permission_classes([AllowAny])

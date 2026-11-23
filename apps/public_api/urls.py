@@ -11,6 +11,7 @@ urlpatterns = [
     path('leads/', views.create_lead, name='create-lead'),
     path('signup/', views.owner_signup, name='owner-signup'),
     path('marketplace/', views.public_marketplace, name='marketplace'),
+    path('marketplace/beneficios/', views.public_marketplace_beneficios, name='marketplace-beneficios'),
     path('plans/', views.public_plans, name='public-plans'),
     path('store-by-domain/', views.store_by_domain, name='store-by-domain'),
     path('<slug:slug>/', views.public_store_detail, name='store-detail'),
