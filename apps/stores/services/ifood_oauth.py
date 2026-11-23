@@ -75,6 +75,12 @@ def credenciais(app: str) -> tuple[str, str]:
     return getattr(settings, chave_id, '') or '', getattr(settings, chave_segredo, '') or ''
 
 
+def credenciais_reais(app: str) -> tuple[str, str]:
+    """A credencial do app de verdade, ignorando o modo homologação."""
+    chave_id, chave_segredo = _CREDENCIAIS[app]
+    return getattr(settings, chave_id, '') or '', getattr(settings, chave_segredo, '') or ''
+
+
 def esta_configurado(app: str = 'pedidos') -> bool:
     return all(credenciais(app))
 
@@ -188,6 +194,19 @@ def _lojas_do_app_de_teste(app: str) -> set:
     ids = {str(m.get('id') or '').lower() for m in dados if isinstance(m, dict) and m.get('id')}
     cache.set(chave, sorted(ids), timeout=LOJAS_DE_TESTE_TTL_S)
     return ids
+
+
+def merchants_do_app(app: str, ids) -> list:
+    """Homologação: só as lojas que o app de teste enxerga (polling com uma loja
+    a mais leva 403 no lote inteiro). Fora dela, todas."""
+    ids = [str(i) for i in ids if i]
+    if not em_homologacao():
+        return ids
+    try:
+        visiveis = _lojas_do_app_de_teste(app)
+    except (IfoodRecusou, IfoodNaoConfigurado):
+        return []
+    return [i for i in ids if i.lower() in visiveis]
 
 
 def _barrar_loja_fora_do_app_de_teste(app: str, caminho: str):

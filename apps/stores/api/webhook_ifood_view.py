@@ -33,6 +33,9 @@ def webhook_ifood_view(request):
                 return HttpResponse(status=202)
             return JsonResponse({'merchantIds': online}, status=202)
 
+    if not webhook_ifood.deve_processar(app):
+        logger.warning('ifood webhook: %s eventos do app real ignorados (modo homologação)', len(eventos))
+        return HttpResponse(status=202)
     from apps.stores.tasks import evento_do_webhook_ifood
     for evento in eventos:
         evento_do_webhook_ifood.delay(app, evento)

@@ -630,10 +630,10 @@ def processar_eventos() -> dict:
     # logísticos já são repassados para esta entrega.
     if ifood_oauth.credenciais(APP)[0] == ifood_oauth.credenciais('pedidos')[0]:
         return resultado
-    merchants = list(
+    merchants = ifood_oauth.merchants_do_app(APP, list(
         StoreIfoodIntegration.objects.filter(conectado=True).exclude(merchant_id='')
         .values_list('merchant_id', flat=True)[:100]
-    )
+    ))
     if not merchants:
         return resultado
     try:

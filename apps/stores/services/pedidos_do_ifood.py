@@ -518,6 +518,8 @@ def processar_eventos(lojas) -> dict:
         integracao = _integracao(store)
         if integracao is not None and integracao.conectado:
             por_merchant[str(integracao.merchant_id or '')] = store
+    visiveis = set(ifood_oauth.merchants_do_app('pedidos', por_merchant))
+    por_merchant = {m: loja for m, loja in por_merchant.items() if m in visiveis}
     if not por_merchant:
         return resultado
     lojas_ativas = list(por_merchant.values())

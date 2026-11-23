@@ -164,3 +164,50 @@ class ProcessarEventoTest(TestCase):
         with patch('apps.stores.services.pedidos_do_ifood.aplicar_evento', return_value=True) as aplicar:
             webhook_ifood.processar('pedidos', evento)
         aplicar.assert_called_once()
+
+
+@override_settings(**{**CREDENCIAIS, 'IFOOD_HOMOLOGACAO_CLIENT_ID': 'app-teste',
+                      'IFOOD_HOMOLOGACAO_CLIENT_SECRET': 'segredo-t'})
+class DuranteAGravacaoTest(TestCase):
+    """Modo homologação ligado (gravação dos vídeos): o webhook do app real
+    continua assinado com o segredo real e não pode virar 401; a loja real
+    sai do ar (presença vazia) porque o servidor só fala com o app de teste."""
+
+    TESTE_M = '00f0d5a7-6142-4120-b34d-1b1d36cdecec'
+
+    def setUp(self):
+        cache.clear()
+        dono = User.objects.create_user(username='dona-grav', password='x')
+        for slug, m in (('ce-grav', MERCHANT), ('teste-grav', self.TESTE_M)):
+            loja = Store.objects.create(billing_exempt=True, name=slug, slug=slug, owner=dono,
+                                        store_type='food', status='active')
+            StoreIfoodIntegration.objects.create(store=loja, merchant_id=m, conectado=True)
+
+    def _post(self, dados, segredo):
+        corpo = json.dumps(dados).encode()
+        return self.client.post(URL, data=corpo, content_type='application/json',
+                                HTTP_X_IFOOD_SIGNATURE=_assinar(segredo, corpo))
+
+    def test_app_real_continua_aceito_mas_loja_real_fica_offline(self):
+        r = self._post({'code': 'KEEPALIVE', 'id': 'k', 'merchantIds': [MERCHANT]}, 'segredo-p')
+        self.assertEqual(r.status_code, 202)
+        self.assertEqual(r.json(), {'merchantIds': []})
+
+    def test_evento_do_app_real_nao_vai_para_a_fila(self):
+        with patch('apps.stores.tasks.evento_do_webhook_ifood.delay') as fila:
+            r = self._post({'code': 'PLC', 'id': 'e', 'merchantId': MERCHANT}, 'segredo-p')
+        self.assertEqual(r.status_code, 202)
+        fila.assert_not_called()
+
+    def test_app_de_teste_processa_como_pedidos(self):
+        r = self._post({'code': 'KEEPALIVE', 'id': 'k', 'merchantIds': [self.TESTE_M]}, 'segredo-t')
+        self.assertEqual(r.json(), {'merchantIds': [self.TESTE_M]})
+        evento = {'code': 'PLC', 'id': 'e9', 'merchantId': self.TESTE_M}
+        with patch('apps.stores.tasks.evento_do_webhook_ifood.delay') as fila:
+            self._post(evento, 'segredo-t')
+        fila.assert_called_once_with('teste', evento)
+
+    def test_polling_so_pede_lojas_do_app_de_teste(self):
+        from apps.stores.services import ifood_oauth
+        with patch.object(ifood_oauth, '_lojas_do_app_de_teste', return_value={self.TESTE_M}):
+            self.assertEqual(ifood_oauth.merchants_do_app('pedidos', [MERCHANT, self.TESTE_M]), [self.TESTE_M])

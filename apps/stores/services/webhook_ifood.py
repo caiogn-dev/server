@@ -21,6 +21,7 @@ import hashlib
 import hmac
 import logging
 
+from django.conf import settings
 from django.db import transaction
 
 from apps.stores.services import ifood_oauth
@@ -28,6 +29,7 @@ from apps.stores.services import ifood_oauth
 logger = logging.getLogger(__name__)
 
 KEEPALIVE = 'KEEPALIVE'
+TESTE = 'teste'
 
 
 def app_da_assinatura(corpo: bytes, assinatura: str) -> str | None:
@@ -35,14 +37,25 @@ def app_da_assinatura(corpo: bytes, assinatura: str) -> str | None:
     assinatura = (assinatura or '').strip().lower()
     if not assinatura:
         return None
-    for app in ('pedidos', 'entregas'):
-        segredo = ifood_oauth.credenciais(app)[1]
+    # Segredo REAL sempre (o webhook do app de verdade não para durante a
+    # gravação da homologação) e, com o modo homologação, o do app de teste.
+    candidatos = [(app, ifood_oauth.credenciais_reais(app)[1]) for app in ('pedidos', 'entregas')]
+    if ifood_oauth.em_homologacao():
+        candidatos.append((TESTE, getattr(settings, 'IFOOD_HOMOLOGACAO_CLIENT_SECRET', '')))
+    for app, segredo in candidatos:
         if not segredo:
             continue
         esperado = hmac.new(segredo.encode('utf-8'), corpo, hashlib.sha256).hexdigest()
         if hmac.compare_digest(esperado, assinatura):
             return app
     return None
+
+
+def deve_processar(app: str) -> bool:
+    """Em homologação o servidor fala com o iFood pelo app de teste: evento do
+    app real não teria como buscar o pedido — a loja real está offline (ver
+    `presenca`), então não chega pedido novo por ele."""
+    return app == TESTE or not ifood_oauth.em_homologacao()
 
 
 def _conectados(ids) -> set:
@@ -59,8 +72,8 @@ def presenca(app: str, evento: dict):
     ids = evento.get('merchantIds')
     if ids is None:
         return None
-    if app != 'pedidos':
-        return []
+    if app not in ('pedidos', TESTE) or not deve_processar(app):
+        return []  # entregas não é PDV; app real em homologação = loja offline
     online = _conectados(ids)
     return [m for m in ids if str(m).lower() in online]
 
@@ -80,6 +93,8 @@ def processar(app: str, evento: dict) -> bool:
     evento_id = evento.get('id')
     if ifood_oauth.evento_ja_visto(evento_id):
         return False
+    if app == TESTE:
+        app = 'pedidos'
     if app == 'entregas':
         aplicado = entrega_ifood.aplicar_evento(evento)
     else:
