@@ -16,6 +16,7 @@ from .api.views.operacao_views import (
     RankingDaOperacaoView, SugestaoDeCombosView,
 )
 from .api.views.lote_views import StoreLoteViewSet
+from .api.views.cartoes_views import CartoesDoClienteView, CartaoDoClienteView
 from .api.views.comanda_views import ComandaImprimirTesteView, ComandaImprimirView, ComandaLayoutView, ComandaPreviaView
 from .api.views.informativos_views import InformativosView, InformativoView, InformativoImagemView
 from .api.views.exibicao_views import ExibicaoDoCardapioView
@@ -319,6 +320,8 @@ store_frontend_patterns = [
     path('voucher/cielo/sop-token/', CieloSopTokenView.as_view(), name='store-cielo-sop-token'),
     path('catalog/', StoreCatalogView.as_view(), name='store-catalog'),
     path('customer/profile/', StoreCustomerProfileView.as_view(), name='store-customer-profile'),
+    path('customer/cartoes/', CartoesDoClienteView.as_view(), name='store-customer-cartoes'),
+    path('customer/cartoes/<str:card_id>/', CartaoDoClienteView.as_view(), name='store-customer-cartao'),
     path('cart/', StoreCartViewSet.as_view({'get': 'get_cart_by_store'}), name='store-cart'),
     path('cart/add/', StoreCartViewSet.as_view({'post': 'add_item'}), name='store-cart-add'),
     path('cart/contato/', StoreCartViewSet.as_view({'post': 'contato'}), name='store-cart-contato'),

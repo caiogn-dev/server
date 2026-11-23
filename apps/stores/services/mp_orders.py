@@ -174,6 +174,10 @@ def build_payer(order, payer_email, payer_data=None):
     address = _order_address(order)
     if address:
         payer['address'] = address
+    # Cartão salvo: o MP exige o cliente dono do cartão. Só o servidor põe
+    # este campo (ver StoreCheckoutView._build_payment_payload).
+    if payer_data.get('customer_id'):
+        payer['customer_id'] = str(payer_data['customer_id'])
     return payer
 
 

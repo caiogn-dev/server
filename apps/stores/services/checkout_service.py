@@ -2073,6 +2073,7 @@ class CheckoutService:
                     payer_data={
                         'identification_type': identification_type,
                         'identification_number': identification_number,
+                        'customer_id': payment_payload.get('_mp_customer_id'),
                     },
                     payment_type=payment_type,
                 )

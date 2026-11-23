@@ -1153,6 +1153,13 @@ class StoreCheckoutView(APIView):
     def _build_payment_payload(self, request):
         """Monta o payload de pagamento, injetando a base de redirect da origem."""
         payment_payload = dict(request.data.get('payment', {}) or {})
+        # Cartão salvo: o cliente do MP vem do PERFIL de quem está logado,
+        # nunca do corpo — senão qualquer um apontaria a carteira de outro.
+        payment_payload.pop('_mp_customer_id', None)
+        if payment_payload.get('card_id') and request.user.is_authenticated:
+            perfil = getattr(request.user, 'profile', None)
+            if perfil is not None and perfil.mp_customer_id:
+                payment_payload['_mp_customer_id'] = perfil.mp_customer_id
         request_origin_base = get_request_origin_base(request)
         if request_origin_base:
             payment_payload['redirect_base_url'] = request_origin_base

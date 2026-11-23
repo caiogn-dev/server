@@ -136,6 +136,10 @@ class UserProfile(models.Model):
     #: escrito por verify_whatsapp_auth_code e é o que `telefone_comprovado`
     #: lê para liberar saldo, carteira e histórico com endereço.
     telefone_verificado = models.CharField(max_length=20, blank=True, default='')
+    #: Cliente deste usuário na conta Mercado Pago da PLATAFORMA (lojas com
+    #: `usa_gateway_da_plataforma`). É onde ficam os cartões salvos — um cartão
+    #: salvo serve a todas as lojas que recebem por essa conta (carteira iFood).
+    mp_customer_id = models.CharField(max_length=40, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
