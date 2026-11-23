@@ -1940,14 +1940,28 @@ class CheckoutService:
                     }]},
                 }
 
-            status_code, body = mp_orders.create_order(
-                credentials['access_token'], order_payload,
-            )
-            pix_criado, _status_pix, _pix_id, _detalhe = mp_orders.interpret(status_code, body)
+            # Loja OAuth com comissão: PIX pela /v1/payments + application_fee.
+            pix_com_split = order is not None and mp_orders.cobra_comissao(target_store)
+            if pix_com_split:
+                order_payload = mp_orders.build_split_pix_payment(
+                    order, payer_email, payment_payload, amount=amount,
+                )
+                status_code, body = mp_orders.create_payment(
+                    credentials['access_token'], order_payload,
+                )
+                pix_criado, _status_pix, _pix_id, _detalhe = mp_orders.interpret_payment(status_code, body)
+            else:
+                status_code, body = mp_orders.create_order(
+                    credentials['access_token'], order_payload,
+                )
+                pix_criado, _status_pix, _pix_id, _detalhe = mp_orders.interpret(status_code, body)
             result = {"status": status_code, "response": body}
 
             if pix_criado:
-                dados_pix = mp_orders.extract_pix(body)
+                dados_pix = (
+                    mp_orders.extract_pix_payment(body) if pix_com_split
+                    else mp_orders.extract_pix(body)
+                )
                 # `_status_pix` vem do interpret(): action_required/pending → 'pending'.
                 payment = {"id": dados_pix.get("payment_id"), "status": _status_pix}
                 pix_data = {
@@ -2064,23 +2078,40 @@ class CheckoutService:
                     or payment_payload.get('device_session_id')
                 )
                 payment_type = mp_orders.tipo_do_cartao(payment_method, payment_payload)
-                order_payload = mp_orders.build_order_payload(
-                    order,
-                    card_token=card_token,
-                    payment_method_id=payment_method_id,
-                    installments=max(1, installments),
-                    payer_email=payer_data.get('email') or payer_email,
-                    payer_data={
-                        'identification_type': identification_type,
-                        'identification_number': identification_number,
-                        'customer_id': payment_payload.get('_mp_customer_id'),
-                    },
-                    payment_type=payment_type,
-                )
-                status_code, body = mp_orders.create_order(
-                    credentials['access_token'], order_payload, device_id=device_id,
-                )
-                ok, mapped_status, pay_id, status_detail = mp_orders.interpret(status_code, body)
+                dados_do_pagador = {
+                    'identification_type': identification_type,
+                    'identification_number': identification_number,
+                    'customer_id': payment_payload.get('_mp_customer_id'),
+                }
+                if mp_orders.cobra_comissao(order.store):
+                    # Loja OAuth com comissão: /v1/payments + application_fee
+                    # (a Orders API ignora a comissão — ver mp_orders).
+                    split_payload = mp_orders.build_split_card_payment(
+                        order,
+                        card_token=card_token,
+                        payment_method_id=payment_method_id,
+                        installments=max(1, installments),
+                        payer_email=payer_data.get('email') or payer_email,
+                        payer_data=dados_do_pagador,
+                    )
+                    status_code, body = mp_orders.create_payment(
+                        credentials['access_token'], split_payload, device_id=device_id,
+                    )
+                    ok, mapped_status, pay_id, status_detail = mp_orders.interpret_payment(status_code, body)
+                else:
+                    order_payload = mp_orders.build_order_payload(
+                        order,
+                        card_token=card_token,
+                        payment_method_id=payment_method_id,
+                        installments=max(1, installments),
+                        payer_email=payer_data.get('email') or payer_email,
+                        payer_data=dados_do_pagador,
+                        payment_type=payment_type,
+                    )
+                    status_code, body = mp_orders.create_order(
+                        credentials['access_token'], order_payload, device_id=device_id,
+                    )
+                    ok, mapped_status, pay_id, status_detail = mp_orders.interpret(status_code, body)
 
                 if ok:
                     order.payment_id = pay_id or str(body.get('id', ''))

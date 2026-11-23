@@ -667,3 +667,142 @@ def interpret(status_code, body):
     if status in ('pending', 'action_required', 'in_review'):
         return True, 'pending', pid, detail
     return False, 'failed', pid, detail
+
+
+# ── Split 1:1: comissão que o MP COBRA (/v1/payments + application_fee) ─────
+#
+# Medido em 23/11: a Orders API aceita `marketplace_fee` e o IGNORA (pedido da
+# Agrião de 01/09: R$ 1,00 → R$ 0,99 para a loja, nenhuma cobrança da
+# plataforma em `charges_details`). O campo documentado para marketplace é o
+# `application_fee` da /v1/payments. Sondado com o token OAuth da Agrião em
+# 23/11 (cartão falso e PIX de valor zero): a rota passa da trava de política
+# — 400 de validação, não o 403 PolicyAgent de 19/08, que foi com o token da
+# PLATAFORMA. Só loja OAuth com comissão ligada vem para cá.
+
+PAYMENTS_URL = 'https://api.mercadopago.com/v1/payments'
+
+
+def cobra_comissao(store):
+    """True quando esta loja paga comissão ao Cardapidex (e cobra pela
+    /v1/payments). Mesma regra de `comissao_da_plataforma`."""
+    return comissao_da_plataforma(store, Decimal('100')) is not None
+
+
+def _comissao_float(store, valor):
+    comissao = comissao_da_plataforma(store, valor)
+    return float(comissao) if comissao else None
+
+
+def _notification_url(store):
+    from django.conf import settings
+    base = (getattr(settings, 'BASE_URL', '') or '').rstrip('/')
+    return f'{base}/webhooks/payments/mercadopago/{store.slug}/' if base else None
+
+
+def _payer_payments_api(order, payer_email, payer_data):
+    """O payer da Orders API serve quase inteiro; a /v1/payments não aceita
+    endereço no payer (vai em additional_info) nem customer_id."""
+    payer = build_payer(order, payer_email, payer_data)
+    payer.pop('address', None)
+    payer.pop('customer_id', None)
+    payer.pop('phone', None)
+    return payer
+
+
+def _additional_info_payments(order, total):
+    itens = [
+        {
+            'id': i.get('external_code') or str(n),
+            'title': i['title'],
+            'quantity': int(i['quantity']),
+            'unit_price': float(i['unit_price']),
+            'category_id': 'food',
+        }
+        for n, i in enumerate(build_items(order, total=total), start=1)
+    ]
+    first, last = split_name(order.customer_name)
+    info = {'items': itens, 'payer': {'first_name': first, 'last_name': last}}
+    area, num = phone_parts(order.customer_phone)
+    if num:
+        info['payer']['phone'] = {'area_code': area, 'number': num}
+    return info
+
+
+def _payment_base(order, valor, payer_email, payer_data):
+    payload = {
+        'transaction_amount': float(valor),
+        'description': f'Pedido {order.order_number} - {order.store.name}'[:256],
+        'external_reference': str(order.id),
+        'payer': _payer_payments_api(order, payer_email, payer_data),
+        'additional_info': _additional_info_payments(order, valor),
+    }
+    fee = _comissao_float(order.store, valor)
+    if fee:
+        payload['application_fee'] = fee
+    url = _notification_url(order.store)
+    if url:
+        payload['notification_url'] = url
+    return payload
+
+
+def build_split_card_payment(order, *, card_token, payment_method_id, installments,
+                             payer_email, payer_data=None):
+    payload = _payment_base(order, order.total, payer_email, payer_data)
+    payload.update({
+        'token': card_token,
+        'payment_method_id': payment_method_id,
+        'installments': max(1, int(installments or 1)),
+        'statement_descriptor': statement_descriptor(order.store),
+    })
+    return payload
+
+
+def build_split_pix_payment(order, payer_email, payer_data=None, amount=None):
+    valor = amount if amount is not None else order.total
+    payload = _payment_base(order, valor, payer_email, payer_data)
+    payload['payment_method_id'] = 'pix'
+    return payload
+
+
+def create_payment(access_token, payload, device_id=None, timeout=25):
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json',
+        'X-Idempotency-Key': str(uuid.uuid4()),
+    }
+    if device_id:
+        headers['X-meli-session-id'] = device_id
+    r = requests.post(PAYMENTS_URL, headers=headers, json=payload, timeout=timeout)
+    try:
+        body = r.json()
+    except ValueError:
+        body = {}
+    return r.status_code, body
+
+
+def interpret_payment(status_code, body):
+    """(ok, 'approved'|'pending'|'failed', payment_id, detalhe) — mesmo
+    contrato de `interpret` para o checkout não saber qual API respondeu."""
+    body = body or {}
+    pid = str(body['id']) if body.get('id') else None
+    detalhe = body.get('status_detail') or ''
+    if status_code not in (200, 201):
+        return False, 'failed', pid, detalhe or body.get('message') or 'erro'
+    estado = body.get('status')
+    if estado == 'approved':
+        return True, 'approved', pid, detalhe
+    if estado in ('pending', 'in_process', 'authorized', 'in_mediation'):
+        return True, 'pending', pid, detalhe
+    return False, 'failed', pid, detalhe
+
+
+def extract_pix_payment(body):
+    body = body or {}
+    dados = ((body.get('point_of_interaction') or {}).get('transaction_data')) or {}
+    return {
+        'payment_id': str(body['id']) if body.get('id') else None,
+        'qr_code': dados.get('qr_code', '') or '',
+        'qr_code_base64': dados.get('qr_code_base64', '') or '',
+        'ticket_url': dados.get('ticket_url', '') or '',
+        'date_of_expiration': body.get('date_of_expiration'),
+    }
