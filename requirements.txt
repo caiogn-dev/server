@@ -105,3 +105,6 @@ pytest-django>=4.7.0
 
 # Observabilidade (ativa só com SENTRY_DSN no env)
 sentry-sdk>=2.0.0
+
+# Transcrição de áudio do WhatsApp (Whisper na NVIDIA, gRPC)
+nvidia-riva-client==2.28.0

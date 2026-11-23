@@ -101,3 +101,22 @@ def test_clique_em_botao_nunca_e_agrupado(cenario):
     botao = _msg(conta, conversa, 'PIX', tipo='interactive')
     _msg(conta, conversa, 'rapido por favor')
     assert WebhookService()._mensagem_superada(botao) is False
+
+
+def test_audio_transcrito_mais_novo_responde_pela_rajada(cenario):
+    """23/11: áudio transcrito é conversa — o texto antes dele vai junto na resposta."""
+    conta, conversa = cenario
+    svc = WebhookService()
+    svc._marcar_processada(_msg(conta, conversa, 'oi'))
+    texto = _msg(conta, conversa, 'quero uma salada')
+    audio = _msg(conta, conversa, 'sem cebola, por favor', tipo='audio')
+    assert svc._mensagem_superada(texto) is True
+    assert svc._texto_da_rajada(audio) == 'quero uma salada\nsem cebola, por favor'
+
+
+def test_audio_sem_transcricao_nao_cala_o_texto(cenario):
+    """Áudio que a NVIDIA não transcreveu fica calado — o texto antes dele responde."""
+    conta, conversa = cenario
+    texto = _msg(conta, conversa, 'quero uma salada')
+    _msg(conta, conversa, '', tipo='audio')
+    assert WebhookService()._mensagem_superada(texto) is False

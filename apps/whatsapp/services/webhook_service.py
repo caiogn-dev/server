@@ -812,6 +812,15 @@ class WebhookService:
 
         return False
 
+    @staticmethod
+    def _nao_pede_resposta(message) -> bool:
+        tipo = getattr(message, 'message_type', '')
+        if tipo == Message.MessageType.REACTION:
+            return True
+        if tipo == Message.MessageType.AUDIO:
+            return not (getattr(message, 'text_body', '') or '').strip()
+        return False
+
     def _responder_saida(self, event: WebhookEvent, message: Message, texto: str) -> None:
         """Confirma para a pessoa. Silêncio aqui faz ela apertar o botão de novo."""
         try:
@@ -851,7 +860,8 @@ class WebhookService:
 
         # EVENTOS QUE NÃO PEDEM RESPOSTA.
         #
-        # Áudio: sem transcrição, silêncio é melhor que "não entendi" — o
+        # Áudio: transcrito (Whisper/NVIDIA, 23/11), vira texto e o bot
+        # responde. Sem transcrição, silêncio é melhor que "não entendi" — o
         # cliente sabe que mandou um áudio, não precisa de eco.
         #
         # Reação: é META-interação. Comenta uma mensagem, não pergunta nada.
@@ -861,8 +871,7 @@ class WebhookService:
         # digitado aquilo. Nenhum handler entende emoji solto, então caía no
         # fallback de erro: o cliente toca num coraçãozinho e leva um pedido
         # de desculpas.
-        SEM_RESPOSTA = (Message.MessageType.AUDIO, Message.MessageType.REACTION)
-        if message.message_type in SEM_RESPOSTA:
+        if self._nao_pede_resposta(message):
             logger.info(
                 '[pipeline] %s não pede resposta — ignorado. message_id=%s',
                 message.message_type, message.id,
@@ -1274,7 +1283,8 @@ class WebhookService:
     # Só texto entra na rajada. Botão e localização são decisões explícitas e
     # respondem sempre; figurinha/reação nem são processadas, então não podem
     # calar o texto que veio antes delas.
-    TIPOS_DA_RAJADA = ('text',)
+    # Áudio transcrito é conversa como texto: "quero uma salada" + 🎤"sem cebola" é um pedido só.
+    TIPOS_DA_RAJADA = ('text', 'audio')
     # Rajada é conversa corrida, não histórico: nada mais velho que isto entra.
     JANELA_DA_RAJADA_S = 180
 
@@ -1297,7 +1307,10 @@ class WebhookService:
             direction=Message.MessageDirection.INBOUND,
             message_type__in=self.TIPOS_DA_RAJADA,
             created_at__gt=message.created_at,
-        ).exclude(pk=message.pk).exists()
+        ).exclude(pk=message.pk).exclude(
+            # Áudio sem transcrição fica calado — não pode "responder por" este texto.
+            message_type=Message.MessageType.AUDIO, text_body='',
+        ).exists()
 
     def _texto_da_rajada(self, message) -> str:
         """O texto desta mensagem precedido dos textos ainda não respondidos.
@@ -2193,7 +2206,16 @@ class WebhookService:
             media_mime_type = media_data.get('mime_type', '')
             text_body = media_data.get('caption', '')
             content = {message_type: media_data}
-            media_url, media_sha256 = self._fetch_and_store_media(event.account, media_id, media_mime_type)
+            media_url, media_sha256, media_bytes = self._baixar_midia(event.account, media_id, media_mime_type)
+            if message_type == 'audio':
+                # O bot ouve: a voz vira o texto da mensagem e segue o caminho
+                # de qualquer mensagem escrita (rajada, handlers, LLM). Sem
+                # transcrição o áudio fica como antes — inbox sim, bot calado.
+                from apps.whatsapp.services import transcricao_de_audio
+                transcricao = transcricao_de_audio.transcrever(media_bytes)
+                if transcricao:
+                    text_body = transcricao
+                    content = {message_type: {**media_data, 'transcricao': transcricao}}
         elif message_type == 'location':
             text_body, content = self._parse_location_content(event, message_data, from_number)
         elif message_type == 'contacts':
@@ -2585,14 +2607,24 @@ class WebhookService:
         mime_type: str
     ) -> Tuple[str, str]:
         """Download media from WhatsApp and store it locally or on the configured storage."""
+        url, sha256, _ = self._baixar_midia(account, media_id, mime_type)
+        return url, sha256
+
+    def _baixar_midia(
+        self,
+        account: WhatsAppAccount,
+        media_id: str,
+        mime_type: str
+    ) -> Tuple[str, str, bytes]:
+        """Como `_fetch_and_store_media`, devolvendo também os bytes (o áudio vai para a transcrição)."""
         if not media_id:
-            return '', ''
+            return '', '', b''
 
         try:
             api_service = WhatsAppAPIService(account)
             url = api_service.get_media_url(media_id)
             if not url:
-                return '', ''
+                return '', '', b''
 
             media_bytes = api_service.download_media(url)
             sha256 = hashlib.sha256(media_bytes).hexdigest()
@@ -2600,11 +2632,11 @@ class WebhookService:
             filename = f"whatsapp/{account.id}/{media_id}{extension}"
 
             if default_storage.exists(filename):
-                return build_absolute_media_url(default_storage.url(filename)), sha256
+                return build_absolute_media_url(default_storage.url(filename)), sha256, media_bytes
 
             saved_path = default_storage.save(filename, ContentFile(media_bytes))
-            return build_absolute_media_url(default_storage.url(saved_path)), sha256
+            return build_absolute_media_url(default_storage.url(saved_path)), sha256, media_bytes
 
         except Exception as exc:
             logger.warning(f"Failed to persist media {media_id}: {exc}")
-            return '', ''
+            return '', '', b''
