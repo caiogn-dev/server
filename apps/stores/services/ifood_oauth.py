@@ -244,6 +244,22 @@ def _app_para_conferir() -> str | None:
     return None
 
 
+def _merchant_fora_do_app(erro) -> bool:
+    """403 "User is forbidden": o app não tem o módulo Merchant liberado (ainda
+    em homologação), mas a loja pode ter autorizado o app para pedidos."""
+    return getattr(erro, 'status', None) == 403 and 'forbidden to access' in str(erro).lower()
+
+
+def _autorizada_no_polling(app: str, merchant_id: str) -> bool:
+    """Polling com só esta loja: 403 "not authorized" = loja não aprovou o app.
+    Evento que vier aqui fica sem ACK e volta no polling normal."""
+    try:
+        api(app, 'GET', '/events/v1.0/events:polling', cabecalhos={'x-polling-merchants': merchant_id})
+    except (IfoodRecusou, IfoodNaoConfigurado):
+        return False
+    return True
+
+
 def verificar(store):
     """Pergunta ao iFood se a loja autorizou o app. Atualiza `conectado`/nome/erro."""
     integracao = integracao_da_loja(store)
@@ -255,6 +271,11 @@ def verificar(store):
     try:
         dados = api(app, 'GET', f'/merchant/v1.0/merchants/{integracao.merchant_id}') or {}
     except (IfoodRecusou, IfoodNaoConfigurado) as erro:
+        if _merchant_fora_do_app(erro) and _autorizada_no_polling(app, integracao.merchant_id):
+            integracao.conectado = True
+            integracao.ultimo_erro = ''
+            integracao.save(update_fields=['conectado', 'ultimo_erro', 'updated_at'])
+            return integracao
         integracao.conectado = False
         status = getattr(erro, 'status', None)
         if status in (401, 403, 404) or 'permission' in str(erro).lower():

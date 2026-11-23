@@ -286,3 +286,51 @@ class HomologacaoSoLojaDeTesteTest(TestCase):
         with tok, req as chamada:
             ifood_oauth.api('pedidos', 'GET', f'/merchant/v1.0/merchants/{self.OUTRA}')
         self.assertEqual(chamada.call_count, 1)
+
+
+@override_settings(**CREDENCIAIS, IFOOD_HOMOLOGACAO_CLIENT_ID='', IFOOD_HOMOLOGACAO_CLIENT_SECRET='')
+class ConexaoSemModuloMerchantTest(TestCase):
+    """App aprovado só em Order/Events (23/11): a Cê Saladas autorizou, mas o
+    módulo Merchant ainda não saiu, então GET /merchants/{id} volta 403
+    "User is forbidden". A conferência cai para o polling da loja, que separa
+    autorizada (200/204) de não autorizada (403 "not authorized")."""
+
+    FORBIDDEN = '403: {"error":{"message":"User is forbidden to access this resource","code":"Forbidden"}}'
+    NAO_AUTORIZADA = '403: {"error":{"message":"Some polling merchants are not authorized."}}'
+
+    def setUp(self):
+        cache.clear()
+        dono = User.objects.create_user(username='dona-merchant', password='x')
+        self.store = Store.objects.create(
+            billing_exempt=True, name='Cê Saladas', slug='ce-sem-merchant', owner=dono,
+            store_type='food', status='active',
+        )
+
+    def _api(self, polling):
+        def falsa(app, metodo, caminho, **kw):
+            if caminho.startswith('/merchant/'):
+                raise ifood_oauth.IfoodRecusou(self.FORBIDDEN, 403, self.FORBIDDEN)
+            self.assertEqual(kw.get('cabecalhos'), {'x-polling-merchants': MERCHANT})
+            if polling is None:
+                return None
+            raise ifood_oauth.IfoodRecusou(polling, 403, polling)
+        return patch.object(ifood_oauth, 'api', side_effect=falsa)
+
+    def test_autorizada_no_polling_fica_conectada(self):
+        with self._api(None):
+            integracao = ifood_oauth.vincular(self.store, MERCHANT)
+        self.assertTrue(integracao.conectado)
+        self.assertEqual(integracao.ultimo_erro, '')
+
+    def test_nao_autorizada_no_polling_fica_aguardando(self):
+        with self._api(self.NAO_AUTORIZADA):
+            integracao = ifood_oauth.vincular(self.store, MERCHANT)
+        self.assertFalse(integracao.conectado)
+        self.assertIn('Portal do Parceiro', integracao.ultimo_erro)
+
+    def test_sem_permissao_do_app_nao_tenta_polling(self):
+        sem = '403: {"error":{"message":"No permissions granted to client x"}}'
+        with patch.object(ifood_oauth, 'api', side_effect=ifood_oauth.IfoodRecusou(sem, 403, sem)) as api:
+            integracao = ifood_oauth.vincular(self.store, MERCHANT)
+        self.assertFalse(integracao.conectado)
+        self.assertEqual(api.call_count, 1)
