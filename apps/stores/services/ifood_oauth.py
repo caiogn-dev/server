@@ -136,6 +136,7 @@ def api(app: str, metodo: str, caminho: str, corpo=None, cabecalhos=None, params
 
     import time
 
+    _barrar_loja_fora_do_app_de_teste(app, caminho)
     renovou = False
     for tentativa in range(1, TENTATIVAS + 1):
         headers = {'Authorization': f'Bearer {token(app)}', **(cabecalhos or {})}
@@ -167,6 +168,39 @@ def api(app: str, metodo: str, caminho: str, corpo=None, cabecalhos=None, params
         except ValueError:
             return None
     return None  # pragma: no cover — o laço sempre retorna ou levanta
+
+
+_MERCHANT_NO_CAMINHO = re.compile(r'/merchants/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})')
+LOJAS_DE_TESTE_TTL_S = 600
+
+
+def em_homologacao() -> bool:
+    return bool(getattr(settings, 'IFOOD_HOMOLOGACAO_CLIENT_ID', '')
+                and getattr(settings, 'IFOOD_HOMOLOGACAO_CLIENT_SECRET', ''))
+
+
+def _lojas_do_app_de_teste(app: str) -> set:
+    chave = f'ifood:lojas_do_app:{credenciais(app)[0]}'
+    guardado = cache.get(chave)
+    if guardado is not None:
+        return set(guardado)
+    dados = api(app, 'GET', '/merchant/v1.0/merchants', params={'page': 1, 'size': 100}) or []
+    ids = {str(m.get('id') or '').lower() for m in dados if isinstance(m, dict) and m.get('id')}
+    cache.set(chave, sorted(ids), timeout=LOJAS_DE_TESTE_TTL_S)
+    return ids
+
+
+def _barrar_loja_fora_do_app_de_teste(app: str, caminho: str):
+    """Homologação: o app de teste só enxerga a loja de teste. Chamada para
+    outra loja voltaria 403 e sujaria o log que o iFood confere nos vídeos —
+    então nem sai daqui (medido 23/11: status da Cê Saladas a cada minuto)."""
+    if not em_homologacao():
+        return
+    achado = _MERCHANT_NO_CAMINHO.search(caminho or '')
+    if not achado:
+        return
+    if achado.group(1).lower() not in _lojas_do_app_de_teste(app):
+        raise IfoodRecusou('403: loja fora do app de teste (homologação)', 403, '')
 
 
 def _espera(resposta, tentativa: int):

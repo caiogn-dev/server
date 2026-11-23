@@ -227,3 +227,62 @@ class ModoHomologacaoTest(TestCase):
                        IFOOD_HOMOLOGACAO_CLIENT_SECRET='')
     def test_credencial_de_teste_pela_metade_nao_liga_o_modo(self):
         self.assertEqual(ifood_oauth.credenciais('pedidos'), ('app-pedidos', 'segredo-p'))
+
+
+@override_settings(**CREDENCIAIS, IFOOD_HOMOLOGACAO_CLIENT_ID='app-teste',
+                   IFOOD_HOMOLOGACAO_CLIENT_SECRET='segredo-t')
+class HomologacaoSoLojaDeTesteTest(TestCase):
+    """Com o app de teste ligado, só a loja de teste fala com o iFood.
+
+    Medido 23/11: o status da Cê Saladas era consultado com a credencial de
+    teste e voltava 403 — sujava o log que o iFood usa para validar os vídeos.
+    """
+
+    OUTRA = '4ea4f892-62f1-4037-a95f-1a903a55be70'
+
+    def setUp(self):
+        cache.clear()
+
+    @staticmethod
+    def _resp(status, dados=None):
+        r = mock.Mock(status_code=status, headers={}, text='')
+        r.content = b'x' if dados is not None else b''
+        r.json.return_value = dados
+        return r
+
+    def _api(self, respostas):
+        return (patch.object(ifood_oauth, 'token', return_value='tok'),
+                mock.patch('requests.request', side_effect=respostas))
+
+    def test_merchant_fora_do_app_de_teste_nem_chega_ao_ifood(self):
+        lista = self._resp(200, [{'id': MERCHANT, 'name': 'Teste'}])
+        tok, req = self._api([lista])
+        with tok, req as chamada:
+            with self.assertRaises(ifood_oauth.IfoodRecusou) as erro:
+                ifood_oauth.api('pedidos', 'GET', f'/merchant/v1.0/merchants/{self.OUTRA}/status')
+        self.assertEqual(erro.exception.status, 403)
+        urls = [c.args[1] for c in chamada.call_args_list]
+        self.assertEqual(urls, [f'{ifood_oauth.BASE}/merchant/v1.0/merchants'])
+
+    def test_loja_de_teste_passa(self):
+        lista = self._resp(200, [{'id': MERCHANT}])
+        status = self._resp(200, [{'state': 'OK'}])
+        tok, req = self._api([lista, status])
+        with tok, req:
+            dados = ifood_oauth.api('pedidos', 'GET', f'/merchant/v1.0/merchants/{MERCHANT}/status')
+        self.assertEqual(dados, [{'state': 'OK'}])
+
+    def test_lista_de_lojas_do_app_fica_em_cache(self):
+        lista = self._resp(200, [{'id': MERCHANT}])
+        tok, req = self._api([lista, self._resp(204), self._resp(204)])
+        with tok, req as chamada:
+            ifood_oauth.api('pedidos', 'GET', f'/merchant/v1.0/merchants/{MERCHANT}/status')
+            ifood_oauth.api('pedidos', 'GET', f'/merchant/v1.0/merchants/{MERCHANT}/interruptions')
+        self.assertEqual(chamada.call_count, 3)
+
+    @override_settings(IFOOD_HOMOLOGACAO_CLIENT_ID='', IFOOD_HOMOLOGACAO_CLIENT_SECRET='')
+    def test_fora_da_homologacao_nao_filtra(self):
+        tok, req = self._api([self._resp(200, {'id': self.OUTRA})])
+        with tok, req as chamada:
+            ifood_oauth.api('pedidos', 'GET', f'/merchant/v1.0/merchants/{self.OUTRA}')
+        self.assertEqual(chamada.call_count, 1)
