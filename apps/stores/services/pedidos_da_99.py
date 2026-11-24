@@ -35,6 +35,7 @@ CHAVE_DA_LOJA = 'app_shop_id_99'
 PROVEDOR = '99food'
 TOKEN_VENCIDO = 10102
 TIMEOUT = 8
+ENTREGADOR_SAIU = '140'
 
 # Motivo que o dono escolhe no painel → código de cancelamento da 99.
 _MOTIVOS = (
@@ -511,11 +512,20 @@ def aplicar_aviso(store, tipo: str, dados) -> bool:
             pedido.save(update_fields=['status', 'delivered_at', 'updated_at'])
     elif tipo in ('orderConfirm', 'orderConfirmed'):
         _registrar(pedido, confirmado=True)
+    elif tipo == 'orderReady':
+        # Loja marcou pronto no painel da 99 (ou eco do nosso): só avança.
+        from apps.stores.services.status_da_plataforma import avancar
+        avancar(pedido, 'ready')
     elif tipo == 'deliveryStatus':
         situacao = str(dados.get('delivery_status') or dados.get('status') or '')[:30]
         if situacao:
             pedido.external_delivery_status = situacao
             pedido.save(update_fields=['external_delivery_status', 'updated_at'])
+        # 140 = entregador da 99 saiu da loja com o pedido (medido pelo ETA até
+        # a loja: 120 indo, 130 chegou, 140 saiu, 150/160 no cliente).
+        if situacao == ENTREGADOR_SAIU:
+            from apps.stores.services.status_da_plataforma import avancar
+            avancar(pedido, 'out_for_delivery')
     elif tipo in ('orderCancelApply', 'orderRefundApply'):
         _registrar(pedido, pedido_do_cliente={
             'tipo': 'cancelamento' if tipo == 'orderCancelApply' else 'reembolso',

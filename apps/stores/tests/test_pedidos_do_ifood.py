@@ -698,3 +698,44 @@ class PainelDoPedidoIfoodTest(TestCase):
         outro = StoreOrder.objects.create(store=self.store, customer_name='X', subtotal=1, total=1)
         r = self.client.get(f'/api/v1/stores/orders/{outro.id}/ifood/negociacao/')
         self.assertEqual(r.status_code, 404)
+
+
+class StatusMudadoNoIfoodTest(PedidosDoIfoodTest):
+    """O lojista mexeu no Gestor de Pedidos do iFood: o painel acompanha (24/11).
+
+    Só AVANÇA (preparo → pronto → saiu → entregue), nunca volta, e não manda
+    nada de volta ao iFood — senão o eco viraria um segundo comando lá.
+    """
+
+    def _evento(self, codigo, pedido=None):
+        with self._api({}), mock.patch.object(pif, 'avisar_status_depois') as volta:
+            pif.aplicar_evento(self.store, {'id': f'e-{codigo}', 'code': codigo, 'orderId': PEDIDO})
+        if pedido is not None:
+            pedido.refresh_from_db()
+        return volta
+
+    def test_preparo_pronto_e_despachado_avancam_sem_eco(self):
+        pedido = self._pedido_salvo()
+        for codigo, esperado in (('PRS', 'preparing'), ('RTP', 'ready'), ('DSP', 'out_for_delivery')):
+            volta = self._evento(codigo, pedido)
+            self.assertEqual(pedido.status, esperado, codigo)
+            volta.assert_not_called()
+        self.assertFalse([c for c in self.chamadas if c[0] == 'POST'])
+
+    def test_nao_volta_status(self):
+        pedido = self._pedido_salvo()
+        StoreOrder.objects.filter(pk=pedido.pk).update(status='out_for_delivery')
+        self._evento('PRS', pedido)
+        self.assertEqual(pedido.status, 'out_for_delivery')
+
+    def test_cancelado_ou_entregue_nao_muda(self):
+        pedido = self._pedido_salvo()
+        for final in ('cancelled', 'delivered'):
+            StoreOrder.objects.filter(pk=pedido.pk).update(status=final)
+            self._evento('DSP', pedido)
+            self.assertEqual(pedido.status, final)
+
+    def test_despachado_na_retirada_fica_pronto(self):
+        pedido = self._pedido_salvo(orderType='TAKEOUT')
+        self._evento('DSP', pedido)
+        self.assertEqual(pedido.status, 'ready')

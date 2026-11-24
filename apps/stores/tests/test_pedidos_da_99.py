@@ -323,3 +323,44 @@ class NumeroDoPedidoTests(Base):
         self.assertEqual(dados['codigo_entrega'], '5000')
         self.assertEqual(dados['codigo_retirada'], '4321')
         self.assertEqual(dados['quem_entrega'], 'entregador da 99')
+
+
+@mock.patch('apps.stores.services.pedidos_da_99.confirmar_depois')
+@mock.patch('apps.stores.services.pedidos_da_99.imprimir_depois')
+class StatusMudadoNa99Tests(Base):
+    """O lojista mexeu no painel da 99: o nosso acompanha (24/11), só avançando.
+
+    Avisos reais medidos no webhook (821 eventos até 24/11): orderReady (loja
+    marcou pronto) e deliveryStatus 120→130→140→150→160 do entregador da 99.
+    Pelo ETA até a loja (rider_to_B_ETA): 120 indo à loja, 130 chegou na loja,
+    140 saiu com o pedido, 150/160 no cliente/entregue (orderFinish fecha).
+    A 99 não avisa "em preparo".
+    """
+
+    def _aviso(self, pedido, tipo, **dados):
+        with mock.patch.object(p99, 'avisar_status_depois') as volta:
+            p99.aplicar_aviso(self.store, tipo, {'order_id': PEDIDO, **dados})
+        pedido.refresh_from_db()
+        volta.assert_not_called()
+
+    def test_pronto_na_99_vira_pronto(self, _imp, _conf):
+        pedido, _ = p99.receber_pedido_novo(self.store, _pedido_novo())
+        self._aviso(pedido, 'orderReady')
+        self.assertEqual(pedido.status, 'ready')
+
+    def test_entregador_saiu_vira_saiu_para_entrega(self, _imp, _conf):
+        pedido, _ = p99.receber_pedido_novo(self.store, _pedido_novo(delivery_type=1))
+        self._aviso(pedido, 'deliveryStatus', delivery_status=130)
+        self.assertEqual(pedido.status, 'pending')
+        self.assertEqual(pedido.external_delivery_status, '130')
+        self._aviso(pedido, 'deliveryStatus', delivery_status=140)
+        self.assertEqual(pedido.status, 'out_for_delivery')
+
+    def test_nao_volta_nem_mexe_em_cancelado(self, _imp, _conf):
+        pedido, _ = p99.receber_pedido_novo(self.store, _pedido_novo())
+        StoreOrder.objects.filter(pk=pedido.pk).update(status='out_for_delivery')
+        self._aviso(pedido, 'orderReady')
+        self.assertEqual(pedido.status, 'out_for_delivery')
+        StoreOrder.objects.filter(pk=pedido.pk).update(status='cancelled')
+        self._aviso(pedido, 'deliveryStatus', delivery_status=140)
+        self.assertEqual(pedido.status, 'cancelled')

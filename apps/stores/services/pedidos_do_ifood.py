@@ -41,6 +41,7 @@ CANCELADO = 'CAN'
 CONCLUIDO = 'CON'
 DESPACHADO = 'DSP'
 PRONTO = 'RTP'
+EM_PREPARO = 'PRS'
 CANCELAMENTO_PEDIDO = 'CAR'
 CANCELAMENTO_NEGADO = 'CARF'
 NEGOCIACAO = 'HSD'
@@ -413,6 +414,14 @@ def aplicar_evento(store, evento: dict) -> bool:
             pedido.save(update_fields=['status', 'delivered_at', 'updated_at'])
     elif codigo == CONFIRMADO:
         _registrar(pedido, confirmado=True)
+    elif codigo in (EM_PREPARO, PRONTO, DESPACHADO):
+        # Mudado no Gestor de Pedidos do iFood (ou eco do nosso): só avança.
+        from apps.stores.services.status_da_plataforma import avancar
+        retirada = str(dados_ifood(pedido).get('tipo') or '').upper() not in ('', 'DELIVERY')
+        novo = {EM_PREPARO: 'preparing', PRONTO: 'ready',
+                DESPACHADO: 'ready' if retirada else 'out_for_delivery'}[codigo]
+        if not avancar(pedido, novo):
+            return False
     elif codigo == CANCELAMENTO_PEDIDO:
         # CAR = o iFood recebeu o pedido de cancelamento DA LOJA e está processando.
         cancelamento = dict(dados_ifood(pedido).get('cancelamento') or {})
