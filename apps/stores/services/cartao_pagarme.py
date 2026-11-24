@@ -91,7 +91,7 @@ def _email_do_cliente(order) -> str:
     return f'cliente-{chave}@clientes.cardapidex.com.br'
 
 
-def build_payload(order, *, card_token, holder_name, holder_document, total=None):
+def build_payload(order, *, card_token, holder_name, holder_document, total=None, ip=''):
     items = pagarme_orders.build_items(order, total=total)
     valor = pagarme_orders.soma_dos_itens(items)
     cliente = {
@@ -107,7 +107,7 @@ def build_payload(order, *, card_token, holder_name, holder_document, total=None
     fone = _telefone(order.customer_phone)
     if fone:
         cliente['phones'] = {'mobile_phone': fone}
-    return {
+    payload = {
         'items': items,
         'customer': cliente,
         'payments': [{
@@ -123,9 +123,26 @@ def build_payload(order, *, card_token, holder_name, holder_document, total=None
         }],
         'metadata': {'pedido': str(order.order_number)},
     }
+    # Mais sinal para o antifraude (24/11 reprovou compra aprovada pelo banco):
+    # IP do cliente e, na entrega, o endereço de entrega.
+    if ip:
+        payload['ip'] = ip[:45]
+    entrega = order.delivery_address if isinstance(order.delivery_address, dict) else {}
+    if entrega and (entrega.get('street') or entrega.get('address')):
+        payload['shipping'] = {
+            # 0 de propósito: o frete já está nos itens (build_items fecha no
+            # total); somar de novo aqui quebraria a conta itens == pagamento.
+            'amount': 0,
+            'description': 'Entrega',
+            'recipient_name': cliente['name'],
+            **({'recipient_phone': f"{fone['area_code']}{fone['number']}"} if fone else {}),
+            'address': _endereco_de_cobranca(order),
+        }
+    return payload
 
 
 MENSAGENS_DE_RECUSA = {
+    'antifraude': 'A análise de segurança não aprovou esta compra e nada foi cobrado. Pague no PIX ou tente outro cartão.',
     'saldo insuficiente': 'O cartão não tem limite para este valor. Use outro cartão ou pague no PIX.',
     'limite': 'O cartão não tem limite para este valor. Use outro cartão ou pague no PIX.',
     'cartao expirado': 'Este cartão está vencido. Use outro cartão ou pague no PIX.',
@@ -136,6 +153,16 @@ MENSAGENS_DE_RECUSA = {
     'transacao nao permitida': 'O banco não liberou esta compra. Fale com o seu banco ou pague no PIX.',
 }
 RECUSA_GENERICA = 'O cartão não foi autorizado. Use outro cartão ou pague no PIX.'
+
+
+def motivo_real(corpo, motivo) -> str:
+    """Antifraude reprovado chega com acquirer_message 'Approved' (o banco
+    aprovou, a Pagar.me desfez — 24/11). O motivo de verdade é o antifraude."""
+    for cobranca in (corpo or {}).get('charges') or []:
+        antifraude = ((cobranca or {}).get('last_transaction') or {}).get('antifraud_response') or {}
+        if str(antifraude.get('status') or '').lower() in ('reproved', 'analysis_error'):
+            return 'antifraude'
+    return motivo
 
 
 def mensagem_de_recusa(motivo) -> str:

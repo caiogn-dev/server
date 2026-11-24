@@ -1751,6 +1751,7 @@ class CheckoutService:
             holder_name=str(payment_data.get('holder_name') or ''),
             holder_document=str(payment_data.get('holder_document') or ''),
             total=valor,
+            ip=str(payment_data.get("_client_ip") or ""),
         )
         try:
             status_code, body = pagarme_orders.create_order(gateway.api_key, payload)
@@ -1804,11 +1805,12 @@ class CheckoutService:
                     'payment_method': 'credit_card', 'requires_redirect': False}
 
         pagamento.status = StorePayment.PaymentStatus.FAILED
-        pagamento.error_message = cartao_pagarme.mensagem_de_recusa(motivo)
+        mensagem = cartao_pagarme.mensagem_de_recusa(cartao_pagarme.motivo_real(body, motivo))
+        pagamento.error_message = mensagem
         pagamento.save()
         order.payment_status = StoreOrder.PaymentStatus.FAILED
         order.save(update_fields=['payment_status', 'updated_at'])
-        return {'success': False, 'error': cartao_pagarme.mensagem_de_recusa(motivo)}
+        return {'success': False, 'error': mensagem}
 
     #: Rótulo do pedido que não deve nada (resgate cobrindo tudo, retirada).
     SEM_COBRANCA = 'sem_cobranca'

@@ -1167,6 +1167,14 @@ class StoreCheckoutView(APIView):
             perfil = getattr(request.user, 'profile', None)
             if perfil is not None and perfil.mp_customer_id:
                 payment_payload['_mp_customer_id'] = perfil.mp_customer_id
+        # IP do cliente para o antifraude (Pagar.me). Vem da requisição, nunca
+        # do corpo; atrás da Cloudflare o IP real é o CF-Connecting-IP.
+        payment_payload.pop('_client_ip', None)
+        ip = (request.META.get('HTTP_CF_CONNECTING_IP')
+              or (request.META.get('HTTP_X_FORWARDED_FOR') or '').split(',')[0]
+              or request.META.get('REMOTE_ADDR') or '').strip()
+        if ip:
+            payment_payload['_client_ip'] = ip
         request_origin_base = get_request_origin_base(request)
         if request_origin_base:
             payment_payload['redirect_base_url'] = request_origin_base

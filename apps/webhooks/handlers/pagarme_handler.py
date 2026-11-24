@@ -107,7 +107,21 @@ class PagarmeHandler(BaseHandler):
 
         if pagamento.status != StorePayment.PaymentStatus.FAILED:
             pagamento.status = StorePayment.PaymentStatus.FAILED
-            pagamento.error_message = pagarme_orders.mensagem_de_recusa(motivo)
+            pagamento.error_message = _mensagem_de_recusa(pagamento, motivo, corpo)
             pagamento.gateway_response = corpo or {}
             pagamento.save()
+        # Cartão do app em análise que o antifraude reprovou (24/11): o pedido
+        # tem de virar `failed` já, senão a tela do cliente fica esperando.
+        pedido = pagamento.order
+        if pedido and pedido.payment_status == StoreOrder.PaymentStatus.PENDING:
+            pedido.payment_status = StoreOrder.PaymentStatus.FAILED
+            pedido.save(update_fields=['payment_status', 'updated_at'])
         return {'ok': True, 'status': 'failed'}
+
+
+def _mensagem_de_recusa(pagamento, motivo, corpo=None) -> str:
+    """Vale e cartão têm textos próprios: cartão recusado não fala em "vale"."""
+    if pagamento.payment_method == StorePayment.PaymentMethod.CREDIT_CARD:
+        from apps.stores.services import cartao_pagarme
+        return cartao_pagarme.mensagem_de_recusa(cartao_pagarme.motivo_real(corpo, motivo))
+    return pagarme_orders.mensagem_de_recusa(motivo)

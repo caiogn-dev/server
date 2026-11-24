@@ -197,3 +197,29 @@ def test_pedido_sem_email_nem_telefone_usa_o_numero_do_pedido(dono):
 def test_email_real_do_cliente_continua_sendo_usado(dono):
     payload = cartao_pagarme.build_payload(_pedido(dono), **{k: v for k, v in CARTAO.items() if k != 'gateway'})
     assert payload['customer']['email'] == 'ana@exemplo.com'
+
+
+# ── antifraude (24/11: banco aprovou, PagarmeAntifraud reprovou) ──
+
+def test_ip_e_endereco_de_entrega_vao_para_o_antifraude(dono):
+    payload = cartao_pagarme.build_payload(
+        _pedido(dono), card_token='t', holder_name='ANA', holder_document='', ip='170.239.227.81')
+    assert payload['ip'] == '170.239.227.81'
+    assert payload['shipping']['address']['city'] == 'Palmas'
+    assert payload['shipping']['amount'] == 0
+
+
+def test_antifraude_reprovado_vira_mensagem_propria_e_nao_fala_em_vale():
+    corpo = {'charges': [{'status': 'canceled', 'last_transaction': {
+        'acquirer_message': 'Approved', 'antifraud_response': {'status': 'reproved'}}}]}
+    msg = cartao_pagarme.mensagem_de_recusa(cartao_pagarme.motivo_real(corpo, 'Approved'))
+    assert 'análise de segurança' in msg and 'vale' not in msg.lower()
+
+
+def test_webhook_de_cartao_reprovado_marca_pedido_failed_com_texto_de_cartao(dono):
+    from apps.webhooks.handlers.pagarme_handler import _mensagem_de_recusa
+    p = _pedido(dono)
+    pag = StorePayment.objects.create(
+        order=p, store=dono, payment_method=StorePayment.PaymentMethod.CREDIT_CARD,
+        status=StorePayment.PaymentStatus.PENDING, amount=p.total)
+    assert 'vale' not in _mensagem_de_recusa(pag, 'Approved', {}).lower()
