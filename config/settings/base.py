@@ -725,6 +725,8 @@ PAGARME_LOJA_DA_PLATAFORMA = os.environ.get('PAGARME_LOJA_DA_PLATAFORMA', 'ce-sa
 # banco e desfeitas pelo antifraude; o dono optou por desligar (risco de
 # chargeback fica com a loja). Religar: PAGARME_CARTAO_ANTIFRAUDE=1 no .env.
 PAGARME_CARTAO_ANTIFRAUDE = os.environ.get('PAGARME_CARTAO_ANTIFRAUDE', '0') == '1'
+# Cartão do app pela Pagar.me (desligado 24/11: taxa 5% + antifraude). 1 = religa.
+PAGARME_CARTAO_APP = os.environ.get('PAGARME_CARTAO_APP', '0') == '1'
 
 PLATFORM_APPLICATION_FEE_PERCENT = Decimal(
     os.environ.get('PLATFORM_APPLICATION_FEE_PERCENT', '0') or '0'

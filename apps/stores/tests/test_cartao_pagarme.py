@@ -59,7 +59,7 @@ def test_loja_de_cliente_sem_pagarme_propria_nao_tem_cartao_pagarme(dono, db):
     assert cartao_pagarme.gateway_do_cartao(make_store()) is None
 
 
-@override_settings(PAGARME_LOJA_DA_PLATAFORMA='loja-do-dono')
+@override_settings(PAGARME_LOJA_DA_PLATAFORMA='loja-do-dono', PAGARME_CARTAO_APP=True)
 def test_config_publica_so_com_chave_publica(dono):
     assert cartao_pagarme.config_publica(dono) == {'gateway': 'pagarme', 'public_key': 'pk_y'}
     StorePaymentGateway.objects.filter(store=dono).update(public_key='')
@@ -164,7 +164,7 @@ def test_webhook_confirma_cartao_pendente(dono):
 
 # ── o app-config anuncia ──
 
-@override_settings(PAGARME_LOJA_DA_PLATAFORMA='loja-do-dono')
+@override_settings(PAGARME_LOJA_DA_PLATAFORMA='loja-do-dono', PAGARME_CARTAO_APP=True)
 def test_app_config_anuncia_cartao_pagarme(dono, db):
     from rest_framework.test import APIClient
     irma = make_store(usa_gateway_da_plataforma=True)
@@ -237,3 +237,8 @@ def test_antifraude_desligado_vai_no_pedido(dono):
 def test_antifraude_religado(dono):
     payload = cartao_pagarme.build_payload(_pedido(dono), card_token='t', holder_name='ANA', holder_document='')
     assert payload['antifraud_enabled'] is True
+
+
+@override_settings(PAGARME_LOJA_DA_PLATAFORMA='loja-do-dono', PAGARME_CARTAO_APP=False)
+def test_desligado_o_app_nao_anuncia_pagarme_e_cai_no_mercado_pago(dono):
+    assert cartao_pagarme.config_publica(dono) is None

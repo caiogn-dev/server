@@ -46,7 +46,13 @@ def gateway_do_cartao(store):
 
 
 def config_publica(store):
-    """O que o app precisa para tokenizar (só a chave PÚBLICA), ou None."""
+    """O que o app precisa para tokenizar (só a chave PÚBLICA), ou None.
+
+    24/11: desligado por padrão — a Pagar.me cobra 5% (MP 4,99%) e o
+    antifraude da conta reprovava toda compra que o banco aprovava. Sem isto
+    o app cai no cartão do Mercado Pago. Religar: PAGARME_CARTAO_APP=1."""
+    if not getattr(settings, 'PAGARME_CARTAO_APP', False):
+        return None
     gateway = gateway_do_cartao(store)
     if gateway is None:
         return None
