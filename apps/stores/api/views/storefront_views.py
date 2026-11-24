@@ -775,6 +775,34 @@ class StoreCustomerProfileView(APIView):
         store = self.get_store(store_slug)
         return Response(build_store_customer_profile(store, request.user))
 
+    @staticmethod
+    def _gravar_nome_e_email(user, data):
+        """Atualiza nome/e-mail do usuário logado. Devolve a mensagem de erro ou ''."""
+        from django.core.exceptions import ValidationError
+        from django.core.validators import validate_email
+
+        campos = []
+        novo = str(data.get('customer_email') or data.get('email') or '').strip().lower()
+        if novo and novo != (user.email or '').strip().lower():
+            try:
+                validate_email(novo)
+            except ValidationError:
+                return 'Esse e-mail não parece válido. Confira e tente de novo.'
+            User = type(user)
+            if User.objects.filter(email__iexact=novo).exclude(pk=user.pk).exists():
+                return 'Esse e-mail já está em outra conta. Use outro e-mail.'
+            user.email = novo
+            campos.append('email')
+        nome = str(data.get('customer_name') or data.get('name') or '').strip()
+        if nome:
+            primeiro, _, resto = nome.partition(' ')
+            if (user.first_name, user.last_name) != (primeiro[:150], resto.strip()[:150]):
+                user.first_name, user.last_name = primeiro[:150], resto.strip()[:150]
+                campos += ['first_name', 'last_name']
+        if campos:
+            user.save(update_fields=campos)
+        return ''
+
     def patch(self, request, store_slug):
         store = self.get_store(store_slug)
         data = request.data or {}
@@ -793,6 +821,14 @@ class StoreCustomerProfileView(APIView):
             first_address = addresses[0]
             if isinstance(first_address, dict):
                 delivery_address = first_address
+
+        # Logado trocando nome/e-mail: `resolve_user` sai cedo com usuário
+        # autenticado e nunca grava esses campos — a tela dizia "salvo" e
+        # nada mudava (24/11). Grava aqui, recusando e-mail de outra conta.
+        erro = self._gravar_nome_e_email(request.user, data)
+        if erro:
+            return Response({'error': erro}, status=status.HTTP_400_BAD_REQUEST)
+        email = request.user.email or email
 
         customer_record = CustomerIdentityService.sync_checkout_customer(
             store=store,
