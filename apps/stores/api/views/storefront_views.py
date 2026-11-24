@@ -1163,9 +1163,17 @@ class StoreCheckoutView(APIView):
 
     def _extract_customer_data(self, request):
         """Extrai os dados do cliente (checkout_service espera name/email/phone)."""
+        email = (request.data.get('customer_email') or '').strip()
+        if not email and request.user.is_authenticated:
+            # O app mandou e-mail vazio por meses (lia o perfil no lugar
+            # errado): logado, o e-mail da conta vale — menos o de fachada.
+            from apps.core.services.customer_identity import CustomerIdentityService
+            da_conta = (request.user.email or '').strip()
+            if da_conta and not da_conta.lower().endswith(CustomerIdentityService.PLACEHOLDER_DOMAIN):
+                email = da_conta
         return {
             'name': request.data.get('customer_name') or '',
-            'email': request.data.get('customer_email') or '',
+            'email': email,
             'phone': request.data.get('customer_phone') or '',
             'cpf': request.data.get('cpf', ''),
             'accepts_marketing': request.data.get('accepts_marketing'),

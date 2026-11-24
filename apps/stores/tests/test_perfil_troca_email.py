@@ -53,3 +53,12 @@ def test_email_de_outra_conta_e_recusado_com_mensagem(cliente):
 def test_email_invalido_e_recusado(cliente):
     r = _patch(make_store(), cliente, {'email': 'nao-e-email'})
     assert r.status_code == 400
+
+
+def test_checkout_logado_sem_email_usa_o_da_conta(cliente):
+    from django.test import RequestFactory
+    from apps.stores.api.views.storefront_views import StoreCheckoutView
+    req = RequestFactory().post('/')
+    req.user = cliente
+    req.data = {'customer_email': ''}
+    assert StoreCheckoutView()._extract_customer_data(req)['email'] == 'velho@exemplo.com'
