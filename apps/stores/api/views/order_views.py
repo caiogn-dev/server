@@ -264,6 +264,7 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             'pedidos_faturados': resumo['pedidos_faturados'],
             'faturamento': f"{resumo['receita']:.2f}",
             'frete': f"{resumo['frete']:.2f}",
+            'desconto_app': f"{resumo['desconto_app']:.2f}",
             'ticket_medio': f'{ticket:.2f}' if ticket is not None else None,
             'por_pagamento': [
                 {**linha, 'total': f"{linha['total']:.2f}"}
@@ -279,6 +280,7 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 'faturamento': 'soma dos pedidos pagos, sem frete, sem cancelados e sem pedidos de teste',
                 'ticket_medio': 'faturamento (sem frete) ÷ pedidos que faturaram',
                 'frete': 'repasse ao entregador dos pedidos que faturaram — não é venda da loja',
+                'desconto_app': 'desconto bancado pelo app de entrega (99Food/iFood) — é venda da loja, mas não passa pelo caixa',
                 'por_pagamento': 'dinheiro recebido por forma de pagamento, com frete — confere com caixa e extrato',
                 'periodo': 'pela data de entrada do pedido, no fuso da loja',
             },

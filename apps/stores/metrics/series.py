@@ -90,6 +90,7 @@ def resumo_de_lista(queryset, incluir_teste=False) -> dict:
     faturando = apenas_receita(queryset, incluir_teste=incluir_teste)
     agg = faturando.aggregate(
         receita=soma_de_venda(), pedidos=Count('id'), frete=Sum('delivery_fee'),
+        desconto_app=Sum('platform_discount'),
     )
 
     receita = _decimal(agg['receita'])
@@ -111,6 +112,10 @@ def resumo_de_lista(queryset, incluir_teste=False) -> dict:
         'pedidos_faturados': pagos,
         'receita': receita,
         'frete': _decimal(agg['frete']),
+        # Desconto bancado pelo app de entrega (99Food/iFood): é venda da loja
+        # (`valor_de_venda` soma de volta) mas não passa pelo caixa. Sem ele a
+        # tela mostrava "recebido 310,14 − frete 3,98 = faturamento 716,46".
+        'desconto_app': _decimal(agg['desconto_app']),
         # Divide pelos pedidos que FATURARAM. Dividir pelo total (com cancelado
         # e não pago dentro) derruba o número e mente sobre a venda média.
         #

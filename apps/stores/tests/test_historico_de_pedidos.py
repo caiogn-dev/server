@@ -181,3 +181,17 @@ class TestResumoDoPeriodo:
         assert Decimal(por_pgto['pix']['total']) == Decimal('160.00')
         assert por_pgto['pix']['pedidos'] == 2
         assert Decimal(por_pgto['cash']['total']) == Decimal('40.00')
+
+    def test_resumo_devolve_o_desconto_pago_pelo_app_que_fecha_a_conta(self, api, loja):
+        # Cê Saladas 24/11: "Total recebido R$ 310,14 − Frete R$ 3,98 =
+        # Faturamento R$ 716,46". A conta não fechava porque o desconto que a
+        # 99 banca (`platform_discount`) entra no faturamento mas não no caixa
+        # — e o resumo não devolvia esse número para a tela mostrar.
+        _pedido(loja, 8, payment_method='99food', delivery_fee=Decimal('2.00'),
+                platform_discount=Decimal('31.99'))
+        _pedido(loja, 50, payment_method='pix')
+
+        d = self._resumo(api, loja)
+        recebido = sum(Decimal(x['total']) for x in d['por_pagamento'])
+        assert Decimal(d['desconto_app']) == Decimal('31.99')
+        assert recebido - Decimal(d['frete']) + Decimal(d['desconto_app']) == Decimal(d['faturamento'])
