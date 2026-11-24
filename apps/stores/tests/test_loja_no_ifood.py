@@ -64,6 +64,15 @@ class Base(TestCase):
 
 @override_settings(**CREDENCIAIS)
 class LeituraTest(Base):
+    def test_loja_desconectada_nao_consulta_o_ifood(self):
+        # Loja de teste depois da gravação: merchant_id ficou, conexão não.
+        # O selo do topo não pode mostrar "Aberta" de um estado que não é nosso.
+        StoreIfoodIntegration.objects.filter(store=self.store).update(conectado=False)
+        with self._api():
+            with self.assertRaises(loja.LojaNoIfoodErro):
+                loja.resumo(self.store)
+        self.assertEqual(self.chamadas, [])
+
     def test_resume_status_pausas_e_horarios(self):
         with self._api({('GET', f'{BASE}/status'): STATUS, ('GET', f'{BASE}/interruptions'): PAUSAS,
                         ('GET', f'{BASE}/opening-hours'): HORARIOS}):

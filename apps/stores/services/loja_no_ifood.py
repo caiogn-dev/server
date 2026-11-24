@@ -48,6 +48,8 @@ def _merchant(store) -> str:
     integracao = StoreIfoodIntegration.objects.filter(store=store).first()
     if integracao is None or not integracao.merchant_id:
         raise LojaNoIfoodErro('Informe o ID da loja no iFood.')
+    if not integracao.conectado:
+        raise LojaNoIfoodErro('Loja não conectada ao iFood.')
     return integracao.merchant_id
 
 
