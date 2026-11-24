@@ -677,23 +677,26 @@ class OrderByTokenView(APIView):
             )
 
 
+def foto_do_item(item) -> str:
+    """Foto da linha do pedido: a da VARIANTE (cai na do produto), arquivo ou
+    link. 24/11: só lia o arquivo do produto — variante e foto por link
+    (main_image_url) apareciam sem foto em "Meus pedidos"."""
+    try:
+        variante = getattr(item, 'variant', None)
+        if variante is not None:
+            return variante.get_image_url() or ''
+        produto = getattr(item, 'product', None)
+        return produto.get_main_image_url() or '' if produto is not None else ''
+    except Exception:
+        return ''
+
+
 def _serialize_customer_orders(request, orders):
     """Shape compartilhada do histórico do cliente (auth e guest).
 
     Itens COMPLETOS (sem corte) e com o id da variante — o "Pedir novamente"
     do storefront repete a variante original e precisa de todas as linhas.
     """
-    def image_url(product):
-        if not product:
-            return ''
-        image = getattr(product, 'main_image', None) or getattr(product, 'image', None)
-        if not image:
-            return ''
-        try:
-            return request.build_absolute_uri(image.url)
-        except Exception:
-            return ''
-
     results = []
     for order in orders:
         items = []
@@ -707,7 +710,7 @@ def _serialize_customer_orders(request, orders):
                 'quantity': item.quantity,
                 'unit_price': float(item.unit_price),
                 'subtotal': float(item.subtotal),
-                'image_url': image_url(getattr(item, 'product', None)),
+                'image_url': foto_do_item(item),
             })
         # Combos já aparecem aqui: a linha vendável do combo vive em order.items
         results.append({
@@ -769,7 +772,7 @@ class GuestOrdersView(APIView):
             StoreOrder.objects
             .filter(store=store, customer_phone__in=variants)
             .select_related('store')
-            .prefetch_related('items__product')
+            .prefetch_related('items__product', 'items__variant__product')
             .order_by('-created_at')[:50]
         )
         return Response({'results': _serialize_customer_orders(request, orders)})
@@ -798,7 +801,7 @@ class CustomerOrdersView(APIView):
         # Get orders where customer email or phone matches user
         orders = StoreOrder.objects.filter(
             customer=user
-        ).select_related('store').prefetch_related('items__product')
+        ).select_related('store').prefetch_related('items__product', 'items__variant__product')
         
         if store_slug:
             orders = orders.filter(store__slug=store_slug)
@@ -850,17 +853,6 @@ class CustomerOrderDetailView(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
             
-            def image_url(product):
-                if not product:
-                    return ''
-                image = getattr(product, 'main_image', None) or getattr(product, 'image', None)
-                if not image:
-                    return ''
-                try:
-                    return request.build_absolute_uri(image.url)
-                except Exception:
-                    return ''
-
             # Escolhas de combo (salada/suco) ficam em StoreOrderComboItem,
             # ligadas à linha vendável — sem isso o cliente vê o combo sem sabores.
             combo_by_order_item = {
@@ -912,7 +904,7 @@ class CustomerOrderDetailView(APIView):
                             or item.options.get('type') == 'custom_salad'
                         )
                     ),
-                    'image_url': image_url(getattr(item, 'product', None)),
+                    'image_url': foto_do_item(item),
                 })
             
             def _ts(dt):
