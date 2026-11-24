@@ -681,9 +681,19 @@ def estado(order) -> dict:
     chamado = order.external_delivery_provider == PROVEDOR and bool(order.external_delivery_id)
     status = order.external_delivery_status if chamado else ''
     valor = meta.get('valor')
-    disponivel = integracao_ativa(order.store) is not None
+    integracao = integracao_ativa(order.store)
+    disponivel = integracao is not None
+    # 'confirmado'/'pronto' = a loja chama sozinha nesse status (mesma regra de
+    # `deve_chamar_sozinho`); '' = o operador chama. O cartão mostra a espera
+    # em vez de um botão que parece tarefa.
+    automatico = ''
+    if (disponivel and order.delivery_method == 'delivery'
+            and order.source not in ('ifood', '99food')
+            and integracao.chamar_entregador in ('confirmado', 'pronto')):
+        automatico = integracao.chamar_entregador
     return {
         'disponivel': disponivel,
+        'automatico': automatico,
         'pode_chamar': disponivel and order.delivery_method == 'delivery'
         and not (_dados_do_pedido_ifood(order) or {}).get('entrega_do_ifood')
         and (not chamado or status in ENCERRADOS_SEM_ENTREGA),

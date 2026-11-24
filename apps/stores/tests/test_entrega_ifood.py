@@ -488,6 +488,18 @@ class PainelDoPedidoTest(Base):
         self.assertEqual(d['codigo_entrega'], '7766')
         self.assertEqual(d['rastreio_url'], 'https://meupedido.ifood.com.br/x')
 
+    def test_estado_diz_quando_a_loja_chama_sozinha(self):
+        # Dono 24/11: "e se a loja tiver entrega automática do iFood?" — o
+        # cartão não pode oferecer "Chamar" como se fosse tarefa do operador.
+        pedido = self._pedido()
+        self.assertEqual(ent.estado(pedido)['automatico'], '')
+        self.integ.chamar_entregador = 'pronto'
+        self.integ.save()
+        self.assertEqual(ent.estado(pedido)['automatico'], 'pronto')
+        # Pedido que o próprio iFood/99 entrega não é chamado sozinho.
+        pedido.source = 'ifood'
+        self.assertEqual(ent.estado(pedido)['automatico'], '')
+
     def test_motivos_e_cancelar_com_codigo(self):
         pedido = self._pedido(external_delivery_provider='ifood', external_delivery_id='entrega-1')
         with mock.patch.object(ent, 'motivos_de_cancelamento', return_value=[{'codigo': '1', 'descricao': 'X'}]):
