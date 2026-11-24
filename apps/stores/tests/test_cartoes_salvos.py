@@ -178,6 +178,9 @@ def test_pagador_leva_customer_id_do_cartao_salvo():
     )
     payer = build_payer(pedido, 'a@exemplo.com', {'customer_id': 'cus-1'})
     assert payer['customer_id'] == 'cus-1'
+    # 24/11: o MP recusa 'customer_id' junto com 'email' ("properties
+    # combination not allowed") — com cartão salvo o pagador é só o cliente.
+    assert payer == {'customer_id': 'cus-1'}
     assert 'customer_id' not in build_payer(pedido, 'a@exemplo.com', {})
 
 

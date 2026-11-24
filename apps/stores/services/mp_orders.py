@@ -176,8 +176,11 @@ def build_payer(order, payer_email, payer_data=None):
         payer['address'] = address
     # Cartão salvo: o MP exige o cliente dono do cartão. Só o servidor põe
     # este campo (ver StoreCheckoutView._build_payment_payload).
+    # Com cliente, o MP já tem e-mail/nome/documento e RECUSA os dois juntos:
+    # "'$.payer' - properties combination 'customer_id' and 'email' not
+    # allowed" (24/11, toda compra com cartão salvo caía aí).
     if payer_data.get('customer_id'):
-        payer['customer_id'] = str(payer_data['customer_id'])
+        return {'customer_id': str(payer_data['customer_id'])}
     return payer
 
 
