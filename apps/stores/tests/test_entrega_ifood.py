@@ -358,6 +358,27 @@ class EventosTest(Base):
         self.assertEqual(pedido.delivery_address['street'], 'Rua Nova')
         self.assertEqual(pedido.metadata['entrega_ifood']['mudanca_endereco']['status'], 'ACEITA')
 
+    def test_evento_de_endereco_nao_apaga_o_status_da_entrega(self):
+        # Ao vivo 24/11 (TES2611242017): o ACCEPTED virou o status da entrega
+        # ("DELIVERY_ADDRESS_CHANGE_ACCEPT", cortado em 30) e o cartão perdeu o
+        # "em andamento" e o cancelar.
+        pedido = self._pedido_chamado()
+        StoreOrder.objects.filter(pk=pedido.pk).update(external_delivery_status='ASSIGN_DRIVER')
+        for codigo in ('DELIVERY_ADDRESS_CHANGE_REQUESTED', 'DELIVERY_ADDRESS_CHANGE_ACCEPTED'):
+            ent.aplicar_evento(self._evento(codigo, metadata={'address': {'streetName': 'Rua Nova'}}))
+        pedido.refresh_from_db()
+        self.assertEqual(pedido.external_delivery_status, 'ASSIGN_DRIVER')
+
+    def test_aceite_por_evento_tambem_troca_o_endereco(self):
+        # Aceite feito fora do nosso botão (outra tela, API): só o evento chega.
+        pedido = self._pedido_chamado()
+        ent._gravar_meta(pedido, mudanca_endereco={'status': 'PEDIDA', 'endereco': {
+            'street': 'Rua Nova', 'number': '10', 'neighborhood': 'Centro', 'city': 'Palmas', 'state': 'TO'}})
+        ent.aplicar_evento(self._evento('DELIVERY_ADDRESS_CHANGE_ACCEPTED'))
+        pedido.refresh_from_db()
+        self.assertEqual(pedido.delivery_address['street'], 'Rua Nova')
+        self.assertEqual(pedido.metadata['entrega_ifood']['mudanca_endereco']['status'], 'ACEITA')
+
     def test_recusar_mudanca(self):
         pedido = self._pedido_chamado()
         ent._gravar_meta(pedido, mudanca_endereco={'status': 'PEDIDA', 'endereco': {}})

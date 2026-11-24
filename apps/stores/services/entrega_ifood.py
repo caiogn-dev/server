@@ -536,6 +536,12 @@ def _mudanca_de_endereco(pedido, codigo: str, extra: dict):
         fim = codigo.rsplit('_', 1)[-1]
         atual['status'] = {'ACCEPTED': 'ACEITA', 'DENIED': 'RECUSADA', 'CONFIRMED': 'ACEITA'}.get(fim, fim)
         _gravar_meta(pedido, mudanca_endereco=atual)
+        # Aceite que não passou pelo nosso botão (só o evento chega): o pedido
+        # também tem que ir para o endereço novo.
+        if atual['status'] == 'ACEITA' and atual.get('endereco'):
+            from apps.stores.models import StoreOrder
+            novo = {**(pedido.delivery_address or {}), **atual['endereco']}
+            StoreOrder.objects.filter(pk=pedido.pk).update(delivery_address=novo)
 
 
 def responder_endereco(order, aceitar: bool):
@@ -587,11 +593,14 @@ def aplicar_evento(evento: dict) -> bool:
     if pedido is None:
         return False
 
-    campos = {'external_delivery_status': codigo[:30]}
+    # Mudança de endereço é uma conversa paralela à corrida: não é status da
+    # entrega. Gravá-la ali apagava o "em andamento" (ao vivo 24/11).
+    campos = {} if codigo.startswith('DELIVERY_ADDRESS_CHANGE') else {'external_delivery_status': codigo[:30]}
     extra = evento.get('metadata') if isinstance(evento.get('metadata'), dict) else {}
     if codigo == 'DELIVERY_DROP_CODE_REQUESTED' and extra.get('CODE'):
         campos['external_delivery_code'] = str(extra['CODE'])[:30]
-    StoreOrder.objects.filter(pk=pedido.pk).update(**campos)
+    if campos:
+        StoreOrder.objects.filter(pk=pedido.pk).update(**campos)
 
     entregador = {k: extra[k] for k in ('workerName', 'workerPhone', 'driverName', 'driverPhone') if extra.get(k)}
     if entregador:
