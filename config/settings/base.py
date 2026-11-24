@@ -721,6 +721,10 @@ BILLING_PIX_ENABLED = os.environ.get('BILLING_PIX_ENABLED', 'false').lower() == 
 #: Loja cuja Pagar.me cobra o cartão das lojas da conta da plataforma
 #: (`usa_gateway_da_plataforma`) — a do dono. Ver cartao_pagarme.
 PAGARME_LOJA_DA_PLATAFORMA = os.environ.get('PAGARME_LOJA_DA_PLATAFORMA', 'ce-saladas')
+# Antifraude da Pagar.me no cartão do app. 24/11: 4 compras aprovadas pelo
+# banco e desfeitas pelo antifraude; o dono optou por desligar (risco de
+# chargeback fica com a loja). Religar: PAGARME_CARTAO_ANTIFRAUDE=1 no .env.
+PAGARME_CARTAO_ANTIFRAUDE = os.environ.get('PAGARME_CARTAO_ANTIFRAUDE', '0') == '1'
 
 PLATFORM_APPLICATION_FEE_PERCENT = Decimal(
     os.environ.get('PLATFORM_APPLICATION_FEE_PERCENT', '0') or '0'

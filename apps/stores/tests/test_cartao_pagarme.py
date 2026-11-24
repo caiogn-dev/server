@@ -223,3 +223,17 @@ def test_webhook_de_cartao_reprovado_marca_pedido_failed_com_texto_de_cartao(don
         order=p, store=dono, payment_method=StorePayment.PaymentMethod.CREDIT_CARD,
         status=StorePayment.PaymentStatus.PENDING, amount=p.total)
     assert 'vale' not in _mensagem_de_recusa(pag, 'Approved', {}).lower()
+
+
+# ── antifraude desligável (24/11, decisão do dono) ──
+
+@override_settings(PAGARME_CARTAO_ANTIFRAUDE=False)
+def test_antifraude_desligado_vai_no_pedido(dono):
+    payload = cartao_pagarme.build_payload(_pedido(dono), card_token='t', holder_name='ANA', holder_document='')
+    assert payload['antifraud_enabled'] is False
+
+
+@override_settings(PAGARME_CARTAO_ANTIFRAUDE=True)
+def test_antifraude_religado(dono):
+    payload = cartao_pagarme.build_payload(_pedido(dono), card_token='t', holder_name='ANA', holder_document='')
+    assert payload['antifraud_enabled'] is True

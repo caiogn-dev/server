@@ -123,6 +123,8 @@ def build_payload(order, *, card_token, holder_name, holder_document, total=None
         }],
         'metadata': {'pedido': str(order.order_number)},
     }
+    from django.conf import settings
+    payload['antifraud_enabled'] = bool(getattr(settings, 'PAGARME_CARTAO_ANTIFRAUDE', False))
     # Mais sinal para o antifraude (24/11 reprovou compra aprovada pelo banco):
     # IP do cliente e, na entrega, o endereço de entrega.
     if ip:
