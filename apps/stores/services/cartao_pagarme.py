@@ -82,6 +82,15 @@ def _telefone(phone):
     return {'country_code': '55', 'area_code': d[:2], 'number': d[2:]}
 
 
+def _email_do_cliente(order) -> str:
+    """E-mail real se válido; senão um técnico estável (mesmo cliente = mesmo e-mail)."""
+    email = pagarme_orders.email_aceito_pelo_gateway(getattr(order, 'customer_email', ''))
+    if email:
+        return email
+    chave = pagarme_orders.somente_digitos(order.customer_phone) or str(order.order_number).lower()
+    return f'cliente-{chave}@clientes.cardapidex.com.br'
+
+
 def build_payload(order, *, card_token, holder_name, holder_document, total=None):
     items = pagarme_orders.build_items(order, total=total)
     valor = pagarme_orders.soma_dos_itens(items)
@@ -92,9 +101,9 @@ def build_payload(order, *, card_token, holder_name, holder_document, total=None
     documento = pagarme_orders.somente_digitos(holder_document)
     if documento:
         cliente['document'] = documento
-    email = pagarme_orders.email_aceito_pelo_gateway(getattr(order, 'customer_email', ''))
-    if email:
-        cliente['email'] = email
+    # Sempre com e-mail: sem ele o antifraude da Pagar.me dá "Buyer.Emails min"
+    # e a Pagar.me cancela sozinha a venda que o banco aprovou (23/11).
+    cliente['email'] = _email_do_cliente(order)
     fone = _telefone(order.customer_phone)
     if fone:
         cliente['phones'] = {'mobile_phone': fone}

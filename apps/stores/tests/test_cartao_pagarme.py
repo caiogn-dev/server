@@ -171,3 +171,29 @@ def test_app_config_anuncia_cartao_pagarme(dono, db):
     r = APIClient().get(f'/api/v1/stores/{irma.slug}/app-config/')
     assert r.status_code == 200
     assert r.json()['payment']['cartao'] == {'gateway': 'pagarme', 'public_key': 'pk_y'}
+
+
+# ── e-mail sempre presente (23/11: banco aprovou, antifraude da Pagar.me
+#    deu "Buyer.Emails min" e a Pagar.me cancelou sozinha — CE-2611238373) ──
+
+def test_pedido_sem_email_vai_com_email_tecnico_estavel_pelo_telefone(dono):
+    p = _pedido(dono)
+    p.customer_email = ''
+    p.save(update_fields=['customer_email'])
+    payload = cartao_pagarme.build_payload(p, **{k: v for k, v in CARTAO.items() if k != 'gateway'})
+    assert payload['customer']['email'] == 'cliente-5563999547790@clientes.cardapidex.com.br'
+
+
+def test_pedido_sem_email_nem_telefone_usa_o_numero_do_pedido(dono):
+    p = _pedido(dono)
+    p.customer_email = ''
+    p.customer_phone = ''
+    p.save(update_fields=['customer_email', 'customer_phone'])
+    payload = cartao_pagarme.build_payload(p, **{k: v for k, v in CARTAO.items() if k != 'gateway'})
+    email = payload['customer']['email']
+    assert email.endswith('@clientes.cardapidex.com.br') and p.order_number.lower() in email
+
+
+def test_email_real_do_cliente_continua_sendo_usado(dono):
+    payload = cartao_pagarme.build_payload(_pedido(dono), **{k: v for k, v in CARTAO.items() if k != 'gateway'})
+    assert payload['customer']['email'] == 'ana@exemplo.com'
