@@ -43,3 +43,17 @@ def test_produto_sem_variante_com_foto_por_link():
     produto.main_image_url = 'https://cdn.exemplo.com/produto.jpg'
     produto.save(update_fields=['main_image_url'])
     assert foto_do_item(_item(loja, produto)).endswith('/produto.jpg')
+
+
+@pytest.mark.django_db
+def test_detalhe_por_token_traz_a_foto_da_variante():
+    from rest_framework.test import APIClient
+    loja = make_store()
+    produto = make_product(loja)
+    v = make_variant(produto)
+    v.image_url = 'https://cdn.exemplo.com/variante.jpg'
+    v.save(update_fields=['image_url'])
+    item = _item(loja, produto, v)
+    r = APIClient().get(f'/api/v1/stores/orders/by-token/{item.order.access_token}/')
+    assert r.status_code == 200
+    assert r.json()['items'][0]['image_url'].endswith('/variante.jpg')

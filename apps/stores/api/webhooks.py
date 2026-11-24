@@ -599,7 +599,8 @@ class OrderByTokenView(APIView):
     def get(self, request, access_token):
         """Get order by access token."""
         try:
-            order = StoreOrder.objects.select_related('store').prefetch_related('items').get(
+            order = StoreOrder.objects.select_related('store').prefetch_related(
+                'items__product', 'items__variant__product').get(
                 access_token=access_token
             )
             
@@ -613,6 +614,8 @@ class OrderByTokenView(APIView):
                     'quantity': item.quantity,
                     'unit_price': float(item.unit_price),
                     'subtotal': float(item.subtotal),
+                    # O app abre o detalhe por aqui: sem foto, item virava "-".
+                    'image_url': foto_do_item(item),
                 })
             
             # Build response
