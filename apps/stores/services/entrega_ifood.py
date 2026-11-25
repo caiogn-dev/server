@@ -126,13 +126,60 @@ def _recusa(erro) -> EntregaIfoodRecusada:
     return EntregaIfoodRecusada(texto[:300], codigo)
 
 
-def _api(metodo, caminho, **kw):
-    try:
-        return ifood_oauth.api(APP, metodo, caminho, **kw)
-    except ifood_oauth.IfoodNaoConfigurado as exc:
-        raise EntregaIfoodRecusada('Entregador iFood não configurado na plataforma.') from exc
-    except ifood_oauth.IfoodRecusou as exc:
-        raise _recusa(exc) from exc
+APP_DA_LOJA_S = 6 * 3600
+
+
+def _chave_app(store) -> str:
+    return f'ifood:app-shipping:{store.pk}'
+
+
+def _apps_para(store=None, pedido=None) -> list:
+    """Apps para tentar, em ordem. Shipping foi homologado em 24/11 no app
+    Cardapidex (pedidos), não no Entregas, e a Cê Saladas deu shipping só ao
+    de pedidos. A entrega já criada segue no app que a criou."""
+    if pedido is not None:
+        criado_por = (_meta(pedido) or {}).get('app')
+        if criado_por:
+            return [criado_por]
+        store = store or pedido.store
+    ordem = [APP]
+    if ifood_oauth.esta_configurado('pedidos') \
+            and ifood_oauth.credenciais('pedidos')[0] != ifood_oauth.credenciais(APP)[0]:
+        ordem.append('pedidos')
+    lembrado = cache.get(_chave_app(store)) if store is not None else None
+    if lembrado in ordem:
+        ordem.remove(lembrado)
+        ordem.insert(0, lembrado)
+    return ordem
+
+
+def _proibido(exc) -> bool:
+    return exc.status == 403 and 'forbidden' in (exc.corpo or str(exc)).lower()
+
+
+def _api(metodo, caminho, loja=None, pedido=None, **kw):
+    apps = _apps_para(loja, pedido)
+    store = loja or (pedido.store if pedido is not None else None)
+    for i, app in enumerate(apps):
+        ultimo = i == len(apps) - 1
+        try:
+            resposta = ifood_oauth.api(app, metodo, caminho, **kw)
+        except ifood_oauth.IfoodNaoConfigurado as exc:
+            if ultimo:
+                raise EntregaIfoodRecusada('Entregador iFood não configurado na plataforma.') from exc
+            continue
+        except ifood_oauth.IfoodRecusou as exc:
+            if _proibido(exc) and not ultimo:
+                continue
+            raise _recusa(exc) from exc
+        if store is not None:
+            cache.set(_chave_app(store), app, timeout=APP_DA_LOJA_S)
+        return resposta
+    raise EntregaIfoodRecusada('Entregador iFood não configurado na plataforma.')
+
+
+def _app_usado(store) -> str:
+    return cache.get(_chave_app(store)) or APP
 
 
 # ── cotação ──────────────────────────────────────────────────────────────
@@ -155,7 +202,7 @@ def cotar(store, lat, lng) -> dict:
     if guardada:
         return guardada
     dados = _api(
-        'GET', f'/shipping/v1.0/merchants/{integracao.merchant_id}/deliveryAvailabilities',
+        'GET', f'/shipping/v1.0/merchants/{integracao.merchant_id}/deliveryAvailabilities', loja=store,
         params={'latitude': lat, 'longitude': lng},
     ) or {}
     quote = dados.get('quote') or {}
@@ -359,7 +406,7 @@ def chamar(order, preparo_s: int = 0):
             if _pagamento(order) and not cotacao['aceita_pagamento_na_entrega']:
                 raise EntregaIfoodRecusada('Pagamento na entrega não aceito pelo entregador iFood aqui.')
             resposta = _api(
-                'POST', f'/shipping/v1.0/merchants/{integracao.merchant_id}/orders',
+                'POST', f'/shipping/v1.0/merchants/{integracao.merchant_id}/orders', loja=order.store,
                 corpo=montar_pedido(order, cotacao, preparo_s),
             ) or {}
         except EntregaIfoodRecusada as exc:
@@ -377,6 +424,7 @@ def chamar(order, preparo_s: int = 0):
         _gravar_meta(
             order, valor=f"{cotacao['valor']:.2f}", quote_id=cotacao['quote_id'],
             chamado_em=timezone.now().isoformat(), erro='', erro_codigo='', entregador=None,
+            app=_app_usado(order.store),
         )
         order.refresh_from_db()
         logger.info('entrega_ifood: %s chamado (%s)', order.order_number, entrega_id)
@@ -405,11 +453,12 @@ def _pedir_entregador_para_pedido_do_ifood(order, do_ifood: dict):
 
     pedido_ifood = str(do_ifood['order_id'])
     try:
-        dados = _api('GET', f'/shipping/v1.0/orders/{pedido_ifood}/deliveryAvailabilities') or {}
+        dados = _api('GET', f'/shipping/v1.0/orders/{pedido_ifood}/deliveryAvailabilities', loja=order.store) or {}
         quote_id = str(dados.get('id') or '')
         if not quote_id:
             raise EntregaIfoodRecusada('iFood não devolveu cotação.')
-        _api('POST', f'/shipping/v1.0/orders/{pedido_ifood}/requestDriver', corpo={'quoteId': quote_id})
+        _api('POST', f'/shipping/v1.0/orders/{pedido_ifood}/requestDriver', loja=order.store,
+             corpo={'quoteId': quote_id})
     except EntregaIfoodRecusada as exc:
         _gravar_meta(order, erro=str(exc), erro_codigo=exc.codigo, erro_em=timezone.now().isoformat())
         raise
@@ -421,7 +470,7 @@ def _pedir_entregador_para_pedido_do_ifood(order, do_ifood: dict):
     _gravar_meta(
         order, valor=f"{_decimal(quote.get('netValue', quote.get('grossValue'))):.2f}", quote_id=quote_id,
         chamado_em=timezone.now().isoformat(), erro='', erro_codigo='', entregador=None,
-        pedido_do_ifood=True,
+        pedido_do_ifood=True, app=_app_usado(order.store),
     )
     order.refresh_from_db()
     logger.info('entrega_ifood: %s requestDriver (pedido iFood %s)', order.order_number, pedido_ifood)
@@ -439,7 +488,7 @@ def _buscar_codigo_de_coleta(order):
     if not order.external_delivery_id or _codigo_de_coleta(order):
         return
     try:
-        detalhe = _api('GET', f'/order/v1.0/orders/{order.external_delivery_id}') or {}
+        detalhe = _api('GET', f'/order/v1.0/orders/{order.external_delivery_id}', pedido=order) or {}
     except Exception as exc:  # noqa: BLE001 — informativo, nunca derruba a chamada
         logger.info('entrega_ifood: %s sem pickupCode ainda (%s)', order.order_number, exc)
         return
@@ -455,7 +504,7 @@ def motivos_de_cancelamento(order) -> list:
     if _pedido_com_entregador_pedido(order):
         # requestDriver não tem motivos: o cancelamento é só antes do aceite.
         return [{'codigo': CANCELAR_SOLICITACAO, 'descricao': 'Cancelar a solicitação de entregador'}]
-    motivos = _api('GET', f'/shipping/v1.0/orders/{order.external_delivery_id}/cancellationReasons') or []
+    motivos = _api('GET', f'/shipping/v1.0/orders/{order.external_delivery_id}/cancellationReasons', pedido=order) or []
     saida = []
     for m in motivos if isinstance(motivos, list) else []:
         codigo = m.get('cancelCodeId') or m.get('code') or m.get('cancellationCode')
@@ -478,7 +527,7 @@ def cancelar(order, motivo: str = '', codigo: str | None = None):
     """Cancela o entregador. `codigo` = motivo escolhido pelo lojista entre os
     do iFood; sem ele (cancelamento automático do pedido) vai o primeiro."""
     if _pedido_com_entregador_pedido(order):
-        _api('POST', f'/shipping/v1.0/orders/{order.external_delivery_id}/cancelRequestDriver')
+        _api('POST', f'/shipping/v1.0/orders/{order.external_delivery_id}/cancelRequestDriver', pedido=order)
         from apps.stores.models import StoreOrder
         StoreOrder.objects.filter(pk=order.pk).update(external_delivery_status='CANCELLATION_REQUESTED')
         order.refresh_from_db()
@@ -496,7 +545,7 @@ def cancelar(order, motivo: str = '', codigo: str | None = None):
     numero = str(escolhido['codigo'] or '').strip()
     if not numero.isdigit():
         raise EntregaIfoodRecusada('iFood devolveu motivo de cancelamento inválido.')
-    _api('POST', f'/shipping/v1.0/orders/{order.external_delivery_id}/cancel', corpo={
+    _api('POST', f'/shipping/v1.0/orders/{order.external_delivery_id}/cancel', pedido=order, corpo={
         'reason': ((escolhido['descricao'] if codigo is not None else motivo) or escolhido['descricao']
                    or 'Cancelado pela loja')[:250],
         'cancellationCode': numero,
@@ -549,7 +598,7 @@ def responder_endereco(order, aceitar: bool):
     if mudanca.get('status') != 'PEDIDA':
         raise EntregaIfoodRecusada('Não há mudança de endereço esperando resposta.')
     acao = 'acceptDeliveryAddressChange' if aceitar else 'denyDeliveryAddressChange'
-    _api('POST', f'/shipping/v1.0/orders/{order.external_delivery_id}/{acao}')
+    _api('POST', f'/shipping/v1.0/orders/{order.external_delivery_id}/{acao}', pedido=order)
     mudanca.update({'status': 'ACEITA' if aceitar else 'RECUSADA', 'respondida_em': timezone.now().isoformat()})
     _gravar_meta(order, mudanca_endereco=mudanca)
     if aceitar and mudanca.get('endereco'):

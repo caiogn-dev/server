@@ -772,3 +772,58 @@ class PollingDeEntregasComCredencialUnicaTest(Base):
         self._pedido(source='web', external_delivery_provider='ifood', external_delivery_id='ext-1')
         with mock.patch.object(ent.ifood_oauth, 'api', side_effect=AssertionError('não chama o iFood')):
             self.assertEqual(ent.processar_eventos()['eventos'], 0)
+
+
+FORBIDDEN = IfoodRecusou('403: forbidden', 403,
+                         '{"error":{"code":"Forbidden","message":"User is forbidden to access this resource"}}')
+
+
+@override_settings(**CREDENCIAIS, IFOOD_CLIENT_ID='app-p', IFOOD_CLIENT_SECRET='sp',
+                   IFOOD_HOMOLOGACAO_CLIENT_ID='', IFOOD_HOMOLOGACAO_CLIENT_SECRET='')
+class AppComShippingTest(Base):
+    """25/11: o Shipping foi homologado no app Cardapidex (pedidos), não no
+    Cardapidex Entregas. A Cê Saladas autorizou shipping só no de pedidos —
+    pelo Entregas o iFood responde 403 "User is forbidden"."""
+
+    def _falso(self, sem_shipping=('entregas',)):
+        self.apps = []
+
+        def falso(app, metodo, caminho, corpo=None, **kw):
+            self.apps.append((app, metodo, caminho))
+            if app in sem_shipping:
+                raise FORBIDDEN
+            if caminho.endswith('/orders') and metodo == 'POST':
+                return {'id': 'entrega-9', 'trackingUrl': 'https://x'}
+            if caminho.endswith('/cancellationReasons'):
+                return [{'cancelCodeId': '817', 'description': 'Cliente desistiu'}]
+            return COTACAO
+        return mock.patch.object(ent.ifood_oauth, 'api', side_effect=falso)
+
+    def test_cotacao_cai_no_app_que_tem_shipping(self):
+        with self._falso():
+            cotacao = ent.cotar(self.store, *PINO)
+        self.assertEqual(cotacao['quote_id'], 'quote-1')
+        self.assertEqual([a for a, *_ in self.apps], ['entregas', 'pedidos'])
+
+    def test_lembra_o_app_da_loja_e_nao_tenta_o_errado_de_novo(self):
+        with self._falso():
+            ent.cotar(self.store, *PINO)
+            cache.delete_many([k for k in [f'ifood:cotacao:{MERCHANT}:{PINO[0]:.5f}:{PINO[1]:.5f}']])
+            ent.cotar(self.store, *PINO)
+        self.assertEqual([a for a, *_ in self.apps], ['entregas', 'pedidos', 'pedidos'])
+
+    def test_entrega_criada_segue_no_mesmo_app_no_cancelamento(self):
+        pedido = self._pedido()
+        with self._falso():
+            ent.chamar(pedido)
+        pedido.refresh_from_db()
+        self.assertEqual(pedido.metadata['entrega_ifood']['app'], 'pedidos')
+        cache.clear()  # mesmo sem a memória da loja, o pedido sabe o app
+        with self._falso():
+            ent.motivos_de_cancelamento(pedido)
+        self.assertEqual(self.apps, [('pedidos', 'GET', '/shipping/v1.0/orders/entrega-9/cancellationReasons')])
+
+    def test_403_nos_dois_apps_vira_recusa_legivel(self):
+        with self._falso(sem_shipping=('entregas', 'pedidos')):
+            with self.assertRaises(ent.EntregaIfoodRecusada):
+                ent.cotar(self.store, *PINO)
