@@ -21,6 +21,9 @@ class StoreCategory(models.Model):
     name = models.CharField(max_length=100)
     slug = models.SlugField(max_length=100)
     description = models.TextField(blank=True)
+    # Selo de prazo/urgência ao lado do título e dentro do produto ("Pedidos até
+    # dia 15/12"). A descrição não serve: some no celular e no tema Elegant.
+    aviso = models.CharField(max_length=80, blank=True, default='')
     image = models.ImageField(upload_to='stores/categories/', blank=True, null=True)
     image_url = models.URLField(blank=True)
 

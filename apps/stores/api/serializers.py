@@ -479,7 +479,7 @@ class StoreCategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = StoreCategory
         fields = [
-            'id', 'store', 'name', 'slug', 'description',
+            'id', 'store', 'name', 'slug', 'description', 'aviso',
             'image', 'image_url', 'parent', 'children',
             'sort_order', 'is_active', 'is_builder_group', 'products_count',
             # Configuração do montador: o storefront monta os passos a partir
