@@ -197,6 +197,42 @@ class StoreViewSet(viewsets.ModelViewSet):
             serializer.save()
         return Response(StoreMetaTrackingSerializer(store).data)
 
+    @action(detail=True, methods=['get', 'patch'], url_path='formas-de-pagamento')
+    def formas_de_pagamento(self, request, pk=None):
+        """Formas que o cardápio pode oferecer, com o interruptor do lojista.
+
+        `disponivel`: há gateway/config para ela (sem isso não há o que ligar).
+        `ligada`: o lojista não desligou. PATCH {"desligadas": [...]}.
+        """
+        from apps.stores.api.views.storefront_views import build_store_payment_config
+        from apps.stores.formas_de_pagamento import (
+            CHAVE_FORMAS_DESLIGADAS, FORMAS_DO_CARDAPIO, formas_desligadas,
+        )
+
+        store = self.get_object()
+        conhecidas = [m for m, _ in FORMAS_DO_CARDAPIO]
+        if request.method == 'PATCH':
+            valores = request.data.get('desligadas')
+            if not isinstance(valores, list) or any(v not in conhecidas for v in valores):
+                return Response(
+                    {'desligadas': f'Use só: {", ".join(conhecidas)}.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            metadata = dict(store.metadata or {})
+            if valores:
+                metadata[CHAVE_FORMAS_DESLIGADAS] = [m for m in conhecidas if m in valores]
+            else:
+                metadata.pop(CHAVE_FORMAS_DESLIGADAS, None)
+            store.metadata = metadata
+            store.save(update_fields=['metadata', 'updated_at'])
+
+        possiveis = set(build_store_payment_config(store, aplicar_desligadas=False)['enabled_methods'])
+        desligadas = formas_desligadas(store)
+        return Response({'formas': [
+            {'metodo': m, 'rotulo': r, 'disponivel': m in possiveis, 'ligada': m not in desligadas}
+            for m, r in FORMAS_DO_CARDAPIO
+        ]})
+
     @action(detail=True, methods=['get', 'patch'], url_path='fiscal-config')
     def fiscal_config(self, request, pk=None):
         """Configuração de NFC-e da loja — opt-in, uma loja por vez."""

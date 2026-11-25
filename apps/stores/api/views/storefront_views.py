@@ -174,8 +174,12 @@ def get_request_origin_base(request):
     return ''
 
 
-def build_store_payment_config(store):
-    """Return the safe public payment configuration for the mobile storefront."""
+def build_store_payment_config(store, aplicar_desligadas=True):
+    """Return the safe public payment configuration for the mobile storefront.
+
+    `aplicar_desligadas=False` devolve o que a loja PODE oferecer (gateway
+    conectado), antes do interruptor do lojista — é o que o painel lista.
+    """
     mercadopago_gateway = (
         StorePaymentGateway.objects.filter(
             store=store,
@@ -260,6 +264,10 @@ def build_store_payment_config(store):
     # Mercado Pago e ofereceria um cartão que morre no clique.
     from apps.stores.services import cartao_pagarme
     cartao = cartao_pagarme.config_publica(store)
+
+    if aplicar_desligadas:
+        from apps.stores.formas_de_pagamento import forma_desligada
+        enabled_methods = [m for m in enabled_methods if not forma_desligada(store, m)]
 
     return {
         'enabled_methods': enabled_methods,
@@ -1460,6 +1468,14 @@ class StoreCheckoutView(APIView):
         raw_payment_method = (request.data.get('payment_method') or '').strip()
         payment_requested = bool(raw_payment_method)
         payment_method = self._resolve_payment_method(raw_payment_method)
+        # Forma que o lojista desligou (Pagamentos → formas no cardápio): um
+        # cardápio em cache ainda pode oferecê-la — o pedido não nasce.
+        from apps.stores.formas_de_pagamento import forma_desligada, rotulo as rotulo_da_forma
+        if payment_requested and forma_desligada(store, payment_method):
+            return Response(
+                {'error': f'{rotulo_da_forma(payment_method)} não está disponível nesta loja. Escolha outra forma de pagamento.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         payment_payload = self._build_payment_payload(request)
 
         # Validate checkout data
