@@ -120,6 +120,11 @@ def _recusa(erro) -> EntregaIfoodRecusada:
             dados = dados.get('error') if isinstance(dados.get('error'), dict) else dados
             codigo = str(dados.get('code') or '')
             mensagem = str(dados.get('message') or '')
+            detalhes = dados.get('details')
+            if isinstance(detalhes, list) and detalhes:
+                # "Houve um problema… Verifique as informações" não diz O QUÊ;
+                # o campo que faltou vem em details (Rosilda, 25/11).
+                mensagem = f"{mensagem} ({'; '.join(str(d) for d in detalhes)})".strip()
     except ValueError:
         pass
     texto = MOTIVOS.get(codigo) or mensagem or str(erro)
@@ -265,19 +270,34 @@ def _telefone(store, order) -> dict:
     return {'type': tipo, 'countryCode': '55', 'areaCode': numero[:2], 'number': numero[2:]}
 
 
-def _cep(store, endereco: dict, lat, lng) -> str:
-    cep = _digitos(endereco.get('zip_code') or endereco.get('postal_code') or endereco.get('cep'))
-    if len(cep) == 8:
-        return cep
+def _reverso(lat, lng) -> dict:
+    """O que o mapa diz do pino (CEP, bairro). Melhor esforço: {} se falhar."""
     try:
         from apps.stores.services.geo.service import geo_service
         reverso = geo_service.reverse_geocode(lat, lng) or {}
-        cep = _digitos(reverso.get('zip_code') or reverso.get('postalCode'))
-    except Exception:
-        cep = ''
+    except Exception:  # noqa: BLE001
+        return {}
+    return reverso if isinstance(reverso, dict) else {}
+
+
+def _cep(store, endereco: dict, lat, lng, reverso=None) -> str:
+    cep = _digitos(endereco.get('zip_code') or endereco.get('postal_code') or endereco.get('cep'))
+    if len(cep) == 8:
+        return cep
+    reverso = _reverso(lat, lng) if reverso is None else reverso
+    cep = _digitos(reverso.get('zip_code') or reverso.get('postalCode'))
     if len(cep) == 8:
         return cep
     return _digitos(store.zip_code)[:8]
+
+
+def _bairro(store, endereco: dict, reverso) -> str:
+    """iFood exige bairro (400 "Neighborhood é um campo obrigatório")."""
+    bairro = str(endereco.get('neighborhood') or endereco.get('bairro') or '').strip()
+    if bairro:
+        return bairro
+    bairro = str(reverso().get('neighborhood') or reverso().get('district') or '').strip()
+    return bairro or str(getattr(store, 'neighborhood', '') or '').strip() or 'Centro'
 
 
 def _endereco(store, order) -> dict:
@@ -287,13 +307,21 @@ def _endereco(store, order) -> dict:
         lat, lng = float(lat), float(lng)
     except (TypeError, ValueError):
         raise EntregaIfoodRecusada('Pedido sem localização no mapa — marque o pino antes de chamar.')
+    memoria = {}
+
+    def reverso():
+        if 'r' not in memoria:
+            memoria['r'] = _reverso(lat, lng)
+        return memoria['r']
+
+    tem_cep = len(_digitos(endereco.get('zip_code') or endereco.get('postal_code') or endereco.get('cep'))) == 8
     return {
-        'postalCode': _cep(store, endereco, lat, lng),
+        'postalCode': _cep(store, endereco, lat, lng, None if tem_cep else reverso()),
         'streetNumber': str(endereco.get('number') or 'S/N')[:10],
         'streetName': str(endereco.get('street') or endereco.get('formatted') or 'Endereço no mapa')[:50],
         'complement': str(endereco.get('complement') or '')[:50],
         'reference': str(endereco.get('reference') or order.delivery_notes or '')[:70],
-        'neighborhood': str(endereco.get('neighborhood') or '')[:50],
+        'neighborhood': _bairro(store, endereco, reverso)[:50],
         'city': str(endereco.get('city') or store.city or '')[:50],
         'state': str(endereco.get('state') or store.state or '')[:2].upper(),
         'country': 'BR',

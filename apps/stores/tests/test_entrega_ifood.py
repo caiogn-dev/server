@@ -827,3 +827,41 @@ class AppComShippingTest(Base):
         with self._falso(sem_shipping=('entregas', 'pedidos')):
             with self.assertRaises(ent.EntregaIfoodRecusada):
                 ent.cotar(self.store, *PINO)
+
+
+@override_settings(**CREDENCIAIS)
+class EnderecoSemBairroTest(Base):
+    """25/11 (Rosilda, CE-2611243529): endereço do pedido sem bairro ("HGP,
+    Palmas, TO") → iFood 400 "Neighborhood é um campo obrigatório" e o painel
+    só mostrava "Houve um problema ao solicitar a entrega"."""
+
+    GEO = 'apps.stores.services.geo.service.GeoService.reverse_geocode'
+
+    def _sem_bairro(self):
+        pedido = self._pedido()
+        endereco = dict(pedido.delivery_address)
+        endereco.pop('neighborhood')
+        pedido.delivery_address = endereco
+        return pedido
+
+    def test_bairro_vazio_vem_do_pino(self):
+        with mock.patch(self.GEO, return_value={'neighborhood': 'Arso', 'zip_code': '77015-202'}):
+            endereco = ent._endereco(self.store, self._sem_bairro())
+        self.assertEqual(endereco['neighborhood'], 'Arso')
+
+    def test_sem_bairro_nem_no_mapa_nunca_vai_vazio(self):
+        with mock.patch(self.GEO, return_value={}):
+            endereco = ent._endereco(self.store, self._sem_bairro())
+        self.assertTrue(endereco['neighborhood'])
+
+    def test_bairro_informado_nao_consulta_o_mapa(self):
+        with mock.patch(self.GEO) as geo:
+            endereco = ent._endereco(self.store, self._pedido())
+        self.assertEqual(endereco['neighborhood'], 'Plano Diretor Sul')
+        geo.assert_not_called()
+
+    def test_detalhe_do_ifood_aparece_na_recusa(self):
+        erro = IfoodRecusou('400', 400, '{"code":"BadRequest","message":"Houve um problema ao solicitar a '
+                                        'entrega. Verifique as informações enviadas.",'
+                                        '"details":["Neighborhood é um campo obrigatório"]}')
+        self.assertIn('Neighborhood é um campo obrigatório', str(ent._recusa(erro)))
