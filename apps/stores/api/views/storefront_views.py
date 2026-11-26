@@ -76,6 +76,7 @@ from apps.stores import billing as billing_service
 from apps.stores.services.delivery_quote_service import DeliveryQuoteService, delivery_quote_service
 from apps.stores.services.geo import geo_service
 from apps.stores.services.realtime_service import broadcast_order_event
+from apps.stores.services.desconto_retirada import promocao_para_vitrine as _promo_retirada
 from apps.stores.services.frete_promocional import (
     aplicar_frete_gratis,
     promocao_para_vitrine,
@@ -712,6 +713,8 @@ class StoreAppConfigView(APIView):
                 # dizer "até 3 km", senão promete frete grátis para quem mora
                 # longe.
                 'frete_gratis': promocao_para_vitrine(store),
+                # Retirada com X% no total (ex.: Black 26/11). Nulo = sem promoção.
+                'desconto_retirada': _promo_retirada(store),
                 # A promessa da loja ("30–45 min"). Nulo = não mostra prazo.
                 'prazo_de_entrega': prazo_para_vitrine(store),
             },

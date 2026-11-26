@@ -1210,6 +1210,14 @@ class CheckoutService:
         # quanto sai de `aplicavel`, que lê o saldo real do banco. Aceitar um
         # valor do payload seria deixar o comprador escrever o próprio
         # desconto — o mesmo buraco do unit_price corrigido em 3f550c6.
+        # Desconto de retirada (promoção da loja): sobre o subtotal já com
+        # cupom e fidelidade, ANTES do cashback — o cardápio soma na mesma ordem.
+        from apps.stores.services.desconto_retirada import desconto_da_retirada
+        desconto_retirada = desconto_da_retirada(
+            store, subtotal - discount, (delivery_payload or {}).get('method') or '',
+        )
+        discount += desconto_retirada
+
         cashback_aplicado = Decimal('0.00')
         if use_cashback:
             from apps.stores.services.cashback_service import CashbackService
@@ -1245,6 +1253,8 @@ class CheckoutService:
         total = (total + voucher_fee).quantize(_CENTS, rounding=ROUND_HALF_UP)
 
         extra_metadata = dict(delivery_payload.get('metadata') or {})
+        if desconto_retirada > 0:
+            extra_metadata['desconto_retirada'] = str(desconto_retirada)
 
         # Create order
         order = StoreOrder.objects.create(
