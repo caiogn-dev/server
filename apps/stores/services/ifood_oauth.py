@@ -231,7 +231,12 @@ def merchants_do_app(app: str, ids) -> list:
     a mais leva 403 no lote inteiro). Fora dela, todas."""
     ids = [str(i) for i in ids if i]
     if not em_homologacao():
-        return ids
+        # Fora da homologação vale o mesmo: UMA loja sem autorização (ex.: a
+        # de TESTE que continuou conectada) derruba o lote inteiro com 403
+        # "Some polling merchants are not authorized" — medido 25/11 00:36 a
+        # 26/11 10:35, 4054 pollings perdidos. Sem saber quais, manda todas.
+        autorizadas = merchants_autorizados(app)
+        return ids if autorizadas is None else [i for i in ids if i.lower() in autorizadas]
     try:
         visiveis = _lojas_do_app_de_teste(app)
     except (IfoodRecusou, IfoodNaoConfigurado):

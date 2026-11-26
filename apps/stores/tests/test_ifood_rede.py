@@ -84,3 +84,17 @@ class WidgetPorLojaTest(TestCase):
             todas = cliente.get('/api/v1/stores/integracoes/ifood/merchants/')
         self.assertEqual(r.data['merchant_ids'], ['m-agriao', 'm-parme'])
         self.assertEqual(sorted(todas.data['merchant_ids']), ['m-agriao', 'm-ce', 'm-parme'])
+
+
+class PollingSoComLojasAutorizadasTest(TestCase):
+    def test_fora_da_homologacao_tira_a_loja_que_o_app_nao_tem(self):
+        from apps.stores.services import ifood_oauth
+        with mock.patch.object(ifood_oauth, 'em_homologacao', return_value=False), \
+                mock.patch.object(ifood_oauth, 'merchants_autorizados', return_value={'m-ok'}):
+            self.assertEqual(ifood_oauth.merchants_do_app('pedidos', ['M-OK', 'm-teste']), ['M-OK'])
+
+    def test_sem_saber_as_autorizadas_manda_todas(self):
+        from apps.stores.services import ifood_oauth
+        with mock.patch.object(ifood_oauth, 'em_homologacao', return_value=False), \
+                mock.patch.object(ifood_oauth, 'merchants_autorizados', return_value=None):
+            self.assertEqual(ifood_oauth.merchants_do_app('pedidos', ['a', 'b']), ['a', 'b'])
