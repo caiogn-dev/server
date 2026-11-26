@@ -200,3 +200,17 @@ class TestSoParaHoje:
                 delivery_data={'method': 'pickup'},
             )
         assert pedido.store_id == loja.id
+
+
+class TestSacolaVazia:
+    """Duplo envio no checkout: o 1º pedido esvazia a sacola, o 2º passava com
+    0 itens e virava pedido R$ 0 'pago' (Cê, 26/11 — CE-2611265297)."""
+
+    def test_sacola_vazia_recusa(self, loja):
+        cart = StoreCart.objects.create(store=loja, session_key='c-vazia')
+        with pytest.raises(ValueError, match='sacola está vazia'):
+            CheckoutService.create_order(
+                cart=cart,
+                customer_data={'name': 'Cliente', 'email': 'c@example.com', 'phone': '+5563999990001'},
+                delivery_data={'method': 'pickup'},
+            )

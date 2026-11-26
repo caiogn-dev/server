@@ -984,6 +984,11 @@ class CheckoutService:
                 delivery_address['state'] = store.state
             delivery_payload['address'] = delivery_address
 
+        # Sacola vazia não vira pedido: duplo envio no checkout criava um pedido
+        # R$ 0 "pago" depois que o 1º esvaziava a sacola (Cê, 26/11).
+        if not cart.items.exists() and not cart.combo_items.exists():
+            raise ValueError('Sua sacola está vazia. Se acabou de finalizar, confira seus pedidos.')
+
         # Validate stock
         stock_errors = cart_service.validate_stock_for_checkout(cart)
         if stock_errors:
