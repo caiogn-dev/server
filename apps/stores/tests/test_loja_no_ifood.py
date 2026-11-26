@@ -270,7 +270,9 @@ class MerchantsDoWidgetTest(TestCase):
 
     def test_so_lojas_conectadas_do_proprio_usuario(self):
         self.client.force_authenticate(self.dono)
-        r = self.client.get(self.url)
+        # Sem consultar o iFood de verdade: quais o app autorizou é outro teste.
+        with mock.patch('apps.stores.services.ifood_oauth.merchants_autorizados', return_value=None):
+            r = self.client.get(self.url)
         self.assertEqual(r.status_code, 200)
         self.assertEqual(sorted(r.data['merchant_ids']), ['m-a', 'm-b'])
 

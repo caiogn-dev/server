@@ -61,10 +61,10 @@ def deve_processar(app: str) -> bool:
 def _conectados(ids) -> set:
     from apps.stores.models import StoreIfoodIntegration
     minusculos = {str(i).lower() for i in ids if i}
-    return set(
-        StoreIfoodIntegration.objects.filter(conectado=True, merchant_id__in=minusculos)
-        .values_list('merchant_id', flat=True)
-    )
+    conectados = set()
+    for integracao in StoreIfoodIntegration.objects.filter(conectado=True).exclude(merchant_id=''):
+        conectados.update(integracao.todos_os_merchants())
+    return conectados & minusculos
 
 
 def presenca(app: str, evento: dict):
@@ -80,10 +80,13 @@ def presenca(app: str, evento: dict):
 
 def _loja(merchant_id):
     from apps.stores.models import StoreIfoodIntegration
-    integracao = StoreIfoodIntegration.objects.filter(
-        merchant_id=str(merchant_id or '').lower(), conectado=True,
-    ).select_related('store').first()
-    return integracao.store if integracao else None
+    alvo = str(merchant_id or '').lower()
+    if not alvo:
+        return None
+    for integracao in StoreIfoodIntegration.objects.filter(conectado=True).select_related('store'):
+        if alvo in integracao.todos_os_merchants():
+            return integracao.store
+    return None
 
 
 def processar(app: str, evento: dict) -> bool:

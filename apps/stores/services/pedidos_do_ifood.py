@@ -83,6 +83,12 @@ def _integracao(store):
     return StoreIfoodIntegration.objects.filter(store=store).first()
 
 
+def _marca(store, merchant_id) -> str:
+    """Marca da rede de onde veio o pedido ('' = o restaurante principal)."""
+    integracao = _integracao(store)
+    return integracao.marca(merchant_id) if integracao is not None else ''
+
+
 def descobrir_loja_no_ifood(store):
     """Depois do vínculo: qual restaurante do iFood este token enxerga."""
     integracao = _integracao(store)
@@ -299,6 +305,7 @@ def receber_pedido_novo(store, dados: dict):
                     'documento': documento,
                     'entrega_do_ifood': entrega_do_ifood,
                     'merchant_id': str((dados.get('merchant') or {}).get('id') or ''),
+                    'marca': _marca(store, (dados.get('merchant') or {}).get('id')),
                     'confirmado': False,
                     'financeiro': {
                         'venda_cardapio': str(subtotal),
@@ -526,7 +533,8 @@ def processar_eventos(lojas) -> dict:
     for store in lojas:
         integracao = _integracao(store)
         if integracao is not None and integracao.conectado:
-            por_merchant[str(integracao.merchant_id or '')] = store
+            for merchant in integracao.todos_os_merchants():
+                por_merchant[merchant] = store
     visiveis = set(ifood_oauth.merchants_do_app('pedidos', por_merchant))
     por_merchant = {m: loja for m, loja in por_merchant.items() if m in visiveis}
     if not por_merchant:

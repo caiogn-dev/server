@@ -35,6 +35,9 @@ class StoreIfoodIntegration(models.Model):
     #: O restaurante no iFood. Vem depois do vínculo, pela API de merchants.
     merchant_id = models.CharField(max_length=64, blank=True, default='')
     merchant_name = models.CharField(max_length=255, blank=True, default='')
+    #: Outras marcas da mesma rede (mesmo CNPJ/cozinha) que caem neste painel:
+    #: [{"id": "<merchant uuid>", "nome": "Santa Parmê"}]. Pedido sai marcado.
+    merchants_da_rede = models.JSONField(default=list, blank=True)
 
     #: Só existe entre pedir o userCode e trocar pelo token. Perdê-lo obriga o
     #: lojista a recomeçar — e ele já saiu da tela.
@@ -73,6 +76,23 @@ class StoreIfoodIntegration(models.Model):
     tempo_preparo_min = models.PositiveSmallIntegerField(default=15)
 
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def todos_os_merchants(self) -> list:
+        """O restaurante principal + as marcas da rede, em minúsculas, sem repetir."""
+        ids = [self.merchant_id] + [str((m or {}).get('id') or '') for m in (self.merchants_da_rede or [])]
+        vistos = []
+        for i in (str(x).strip().lower() for x in ids):
+            if i and i not in vistos:
+                vistos.append(i)
+        return vistos
+
+    def marca(self, merchant_id) -> str:
+        """Nome curto da marca da rede ('' para o restaurante principal ou desconhecido)."""
+        alvo = str(merchant_id or '').lower()
+        for m in self.merchants_da_rede or []:
+            if str((m or {}).get('id') or '').lower() == alvo:
+                return str(m.get('nome') or '')
+        return ''
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

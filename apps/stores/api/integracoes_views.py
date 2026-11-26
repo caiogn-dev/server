@@ -210,13 +210,19 @@ class IfoodMerchantsDoWidgetView(APIView):
 
     def get(self, request):
         from apps.core.permissions import accessible_store_ids
-        ids = list(
-            StoreIfoodIntegration.objects
-            .filter(store_id__in=accessible_store_ids(request.user), conectado=True)
-            .exclude(merchant_id='')
-            .order_by('created_at')
-            .values_list('merchant_id', flat=True)
-        )
+        ids = []
+        integracoes = (StoreIfoodIntegration.objects
+                       .filter(store_id__in=accessible_store_ids(request.user), conectado=True)
+                       .exclude(merchant_id='').order_by('created_at'))
+        # Com ?store= vai só aquela loja (e as marcas da rede dela): o login do
+        # iFood de quem abre o widget costuma ter acesso a UMA conta — Cê e a
+        # rede da Agrião juntas = "Usuário não tem acesso em alguns dos
+        # restaurantes inclusos no widget" (26/11).
+        loja = (request.query_params.get('store') or '').strip()
+        if loja:
+            integracoes = integracoes.filter(store__slug=loja)
+        for integracao in integracoes:
+            ids.extend(i for i in integracao.todos_os_merchants() if i not in ids)
         # Loja que o app de verdade não tem autorizada (ex.: a de TESTE da
         # homologação) derruba o widget inteiro: "Usuário não tem acesso em
         # alguns dos restaurantes inclusos no widget" (26/11).
