@@ -225,7 +225,7 @@ from .api.entrega_ifood_views import (
 )
 from .api.integracoes_views import (
     IfoodConfigView, IfoodDesconectarView, IntegracoesDaLojaView, LojaNoIfoodHorariosView,
-    LojaNoIfoodPausarView, LojaNoIfoodRetomarView, LojaNoIfoodView,
+    LojaNoIfoodPausarView, LojaNoIfoodRedeView, LojaNoIfoodRetomarView, LojaNoIfoodView,
     IfoodMerchantsDoWidgetView,
 )
 from .api.payment_views import (
@@ -534,6 +534,7 @@ urlpatterns = [
     path('minhas-marcas/', MinhasMarcasView.as_view(), name='minhas-marcas'),
     path('integracoes/ifood/merchants/', IfoodMerchantsDoWidgetView.as_view(), name='ifood-merchants-widget'),
     path('integracoes/ifood/loja/', LojaNoIfoodView.as_view(), name='ifood-loja'),
+    path('integracoes/ifood/loja/rede/', LojaNoIfoodRedeView.as_view(), name='ifood-loja-rede'),
     path('integracoes/ifood/loja/pausar/', LojaNoIfoodPausarView.as_view(), name='ifood-loja-pausar'),
     path('integracoes/ifood/loja/retomar/', LojaNoIfoodRetomarView.as_view(), name='ifood-loja-retomar'),
     path('integracoes/ifood/loja/horarios/', LojaNoIfoodHorariosView.as_view(), name='ifood-loja-horarios'),

@@ -16,6 +16,8 @@ trabalha com início/fim. Turno que passa da meia-noite não é aceito aqui
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import json
 import re
 import uuid
@@ -43,6 +45,21 @@ def _app() -> str:
     raise LojaNoIfoodErro('iFood não configurado na plataforma.')
 
 
+#: Marca da rede em que a operação age (vazio = o restaurante principal).
+#: Contexto em vez de parâmetro: status, pausa e horário passam todos por
+#: `_merchant`, e as chaves de cache já separam por merchant.
+_MARCA = contextvars.ContextVar('ifood_marca', default='')
+
+
+@contextlib.contextmanager
+def com_marca(merchant_id):
+    token = _MARCA.set(str(merchant_id or '').strip().lower())
+    try:
+        yield
+    finally:
+        _MARCA.reset(token)
+
+
 def _merchant(store) -> str:
     from apps.stores.models import StoreIfoodIntegration
     integracao = StoreIfoodIntegration.objects.filter(store=store).first()
@@ -50,6 +67,11 @@ def _merchant(store) -> str:
         raise LojaNoIfoodErro('Informe o ID da loja no iFood.')
     if not integracao.conectado:
         raise LojaNoIfoodErro('Loja não conectada ao iFood.')
+    marca = _MARCA.get()
+    if marca:
+        if marca not in integracao.todos_os_merchants():
+            raise LojaNoIfoodErro('Essa marca não é desta loja.')
+        return marca
     return integracao.merchant_id
 
 
@@ -175,6 +197,26 @@ def resumo(store) -> dict:
         'pausas': _com_recentes(store, _pausas(_chamar(store, 'GET', '/interruptions'))),
         'horarios': _horarios_recentes(store) or _horarios(_chamar(store, 'GET', '/opening-hours')),
     }
+
+
+def rede(store) -> list:
+    """Cada restaurante da loja no iFood (principal + marcas da rede) com o status."""
+    from apps.stores.models import StoreIfoodIntegration
+    integracao = StoreIfoodIntegration.objects.filter(store=store).first()
+    if integracao is None or not integracao.conectado:
+        raise LojaNoIfoodErro('Loja não conectada ao iFood.')
+    nomes = {str(m.get('id') or '').lower(): str(m.get('nome') or '') for m in integracao.merchants_da_rede or []}
+    saida = []
+    for merchant in integracao.todos_os_merchants():
+        nome = nomes.get(merchant) or (integracao.merchant_name.split(' - ')[0] if integracao.merchant_name else '') \
+            or store.name
+        try:
+            with com_marca(merchant):
+                status = _status(_chamar(store, 'GET', '/status'))
+        except LojaNoIfoodErro:
+            status = None
+        saida.append({'id': merchant, 'nome': nome, 'status': status})
+    return saida
 
 
 def _chave_horarios(store) -> str:

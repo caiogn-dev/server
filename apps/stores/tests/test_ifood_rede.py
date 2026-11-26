@@ -98,3 +98,40 @@ class PollingSoComLojasAutorizadasTest(TestCase):
         with mock.patch.object(ifood_oauth, 'em_homologacao', return_value=False), \
                 mock.patch.object(ifood_oauth, 'merchants_autorizados', return_value=None):
             self.assertEqual(ifood_oauth.merchants_do_app('pedidos', ['a', 'b']), ['a', 'b'])
+
+
+class OperacaoPorMarcaTest(TestCase):
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        from apps.stores.models import Store
+        from apps.stores.models.ifood import StoreIfoodIntegration
+        dono = get_user_model().objects.create_user(username='dono-marca', password='x')
+        self.loja = Store.objects.create(name='Agrião', slug='agriao-m', owner=dono, status='active')
+        StoreIfoodIntegration.objects.create(
+            store=self.loja, merchant_id='principal', conectado=True,
+            merchants_da_rede=[{'id': 'santa', 'nome': 'Santa Parmê'}])
+
+    def test_pausa_vai_para_a_marca_escolhida(self):
+        from apps.stores.services import loja_no_ifood as l
+        with mock.patch.object(l, '_chamar', wraps=None) as chamar:
+            chamar.return_value = {'id': 'p1'}
+            with l.com_marca('SANTA'):
+                self.assertEqual(l._merchant(self.loja), 'santa')
+            self.assertEqual(l._merchant(self.loja), 'principal')
+
+    def test_marca_de_outra_loja_e_recusada(self):
+        from apps.stores.services import loja_no_ifood as l
+        with l.com_marca('intrusa'), self.assertRaises(l.LojaNoIfoodErro):
+            l._merchant(self.loja)
+
+    def test_rede_lista_status_de_cada_marca(self):
+        from apps.stores.services import loja_no_ifood as l
+        vistos = []
+        def falso(store, metodo, caminho, corpo=None):
+            vistos.append(l._merchant(store))
+            return [{'operation': 'DELIVERY', 'available': True, 'state': 'OK'}]
+        with mock.patch.object(l, '_chamar', side_effect=falso):
+            marcas = l.rede(self.loja)
+        self.assertEqual([m['id'] for m in marcas], ['principal', 'santa'])
+        self.assertEqual(marcas[1]['nome'], 'Santa Parmê')
+        self.assertEqual(vistos, ['principal', 'santa'])

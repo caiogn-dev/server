@@ -166,10 +166,27 @@ class _LojaNoIfoodBase(APIView):
         loja, erro = _loja_ou_erro(request)
         if erro:
             return erro
+        marca = request.query_params.get('marca') or (request.data or {}).get('marca') or ''
         try:
-            if operacao:
-                operacao(loja_no_ifood, loja)
-            return Response(loja_no_ifood.resumo(loja))
+            with loja_no_ifood.com_marca(marca):
+                if operacao:
+                    operacao(loja_no_ifood, loja)
+                return Response(loja_no_ifood.resumo(loja))
+        except loja_no_ifood.LojaNoIfoodErro as exc:
+            return Response({'detail': str(exc)}, status=400)
+
+
+class LojaNoIfoodRedeView(APIView):
+    """Os restaurantes da loja no iFood (principal + marcas da rede) com o status de cada."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from ..services import loja_no_ifood
+        loja, erro = _loja_ou_erro(request)
+        if erro:
+            return erro
+        try:
+            return Response({'marcas': loja_no_ifood.rede(loja)})
         except loja_no_ifood.LojaNoIfoodErro as exc:
             return Response({'detail': str(exc)}, status=400)
 
