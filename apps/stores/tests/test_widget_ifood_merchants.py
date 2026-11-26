@@ -44,3 +44,13 @@ class MerchantsDoWidgetTests(APITestCase):
         with mock.patch.object(ifood_oauth, 'token', side_effect=ifood_oauth.IfoodNaoConfigurado('x')):
             resposta = self.client.get(URL)
         self.assertEqual(sorted(resposta.data['merchant_ids']), sorted([CE, TESTE]))
+
+    def test_token_compacto_sem_lista_pergunta_ao_ifood(self):
+        # Rede inteira autorizada → token 'compact' sem merchant_scope.
+        from django.core.cache import cache
+        cache.clear()
+        with mock.patch.object(ifood_oauth, 'token', return_value=_jwt(None)), \
+                mock.patch.object(ifood_oauth, 'api', return_value=[{'id': CE.upper(), 'name': 'Cê'}]) as api:
+            resposta = self.client.get(URL)
+        self.assertEqual(resposta.data['merchant_ids'], [CE])
+        self.assertEqual(api.call_args.args[2], '/merchant/v1.0/merchants')

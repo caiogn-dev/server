@@ -181,8 +181,12 @@ LOJAS_DE_TESTE_TTL_S = 600
 
 
 def merchants_autorizados(app: str = 'pedidos'):
-    """Lojas que o app tem autorizadas (merchant_scope do token), em minúsculas.
-    None quando não dá para saber — quem chama não filtra."""
+    """Lojas que o app tem autorizadas, em minúsculas. None quando não dá para saber.
+
+    O token traz `merchant_scope` só enquanto a lista é curta: com a rede inteira
+    autorizada (8 lojas, 26/11) ele vem `type: compact`, sem lista — aí pergunta
+    ao iFood (GET /merchants devolve só as autorizadas) e guarda 10 min.
+    """
     import base64
     import json
     try:
@@ -191,9 +195,19 @@ def merchants_autorizados(app: str = 'pedidos'):
     except Exception:  # noqa: BLE001 — sem token legível, sem filtro
         return None
     escopo = dados.get('merchant_scope') if isinstance(dados, dict) else None
-    if not isinstance(escopo, list):
+    if isinstance(escopo, list) and escopo:
+        return {str(m).split(':')[0].lower() for m in escopo if m}
+    chave = f'ifood:autorizadas:{credenciais(app)[0]}'
+    guardado = cache.get(chave)
+    if guardado is not None:
+        return set(guardado)
+    try:
+        lista = api(app, 'GET', '/merchant/v1.0/merchants', params={'page': 1, 'size': 100}) or []
+    except Exception:  # noqa: BLE001
         return None
-    return {str(m).split(':')[0].lower() for m in escopo if m}
+    ids = {str(m.get('id') or '').lower() for m in lista if isinstance(m, dict) and m.get('id')}
+    cache.set(chave, sorted(ids), timeout=600)
+    return ids
 
 
 def em_homologacao() -> bool:
