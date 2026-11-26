@@ -1760,9 +1760,14 @@ class StoreDeliveryFeeView(APIView):
             # O UnifiedDeliveryService devolve a taxa como número e monta o
             # próprio dicionário, então a promoção se perderia lá dentro: ela
             # é aplicada aqui, sobre a cotação já normalizada.
-            return Response(aplicar_frete_gratis(
+            cotacao = aplicar_frete_gratis(
                 delivery_quote_service.normalize(delivery_info), store, subtotal,
-            ))
+            )
+            # Devolve o ponto usado na cotação: link curto do Maps só o servidor
+            # resolve, e sem isto o pedido do PDV saía só com o link (26/11).
+            if lat and lng:
+                cotacao['lat'], cotacao['lng'] = float(lat), float(lng)
+            return Response(cotacao)
         except Exception as e:
             logger.error(f"Delivery fee calculation error: {e}")
             return Response(

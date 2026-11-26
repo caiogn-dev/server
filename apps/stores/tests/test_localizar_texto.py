@@ -91,3 +91,30 @@ class EndpointDoPdvTests(TestCase):
             resp = self._post('lugar que não existe')
         self.assertEqual(resp.status_code, 400)
         self.assertIn('mapa', resp.json()['error'])
+
+
+class LinkDoMapsDevolveOPontoTests(EndpointDoPdvTests):
+    """Link curto do Maps colado no PDV: o servidor resolve o ponto para cotar
+    e precisa DEVOLVÊ-LO — senão o pedido sai só com o link, sem rua nem
+    coordenada (26/11)."""
+
+    LINK = 'https://maps.app.goo.gl/AbCdEf123'
+
+    def test_devolve_lat_lng_resolvidos_do_link(self):
+        from apps.stores.services.unified_delivery_service import UnifiedDeliveryService
+        with patch('apps.stores.api.views.storefront_views._coords_from_maps_url', return_value=(-10.18, -48.33)), \
+                patch.object(UnifiedDeliveryService, 'calculate_delivery_fee',
+                             return_value={'success': True, 'fee': 8, 'distance_km': 3.2}):
+            resp = self._post(self.LINK)
+        self.assertEqual(resp.status_code, 200, resp.content)
+        corpo = resp.json()
+        self.assertEqual((corpo['lat'], corpo['lng']), (-10.18, -48.33))
+
+    def test_texto_geocodificado_tambem_devolve_o_ponto(self):
+        from apps.stores.services.unified_delivery_service import UnifiedDeliveryService
+        with patch.object(GeoService, 'localizar', return_value={**SSP, 'location_type': 'PLACE'}), \
+                patch.object(UnifiedDeliveryService, 'calculate_delivery_fee',
+                             return_value={'success': True, 'fee': 10.5, 'distance_km': 4.5}):
+            resp = self._post('Secretaria da Segurança Pública')
+        corpo = resp.json()
+        self.assertEqual((corpo['lat'], corpo['lng']), (float(SSP['lat']), float(SSP['lng'])))
