@@ -994,6 +994,7 @@ class CheckoutService:
             [(item.product, int(item.quantity or 0)) for item in cart.items.select_related('product').all()],
             delivery_payload.get('method') or '',
             timezone.localtime(),
+            data_do_pedido=scheduled_date,
         )
         if erros_de_regra:
             raise ValueError(' '.join(erros_de_regra))

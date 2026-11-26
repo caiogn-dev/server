@@ -10,6 +10,7 @@ Formato em `StoreProduct.regras_de_venda` (tudo opcional; {} = sem regra):
         'dias': [0, 1, 2, 3, 4],      # weekday() do Python; vazio = todo dia
         'de': '11:00', 'ate': '15:00',  # janela do dia; os dois ou nenhum
         'so_retirada': True,
+        'so_hoje': True,               # só pedido para hoje (sobra do dia em promoção)
         'minimo': 10, 'maximo': 50,    # unidades do item por pedido
     }
 
@@ -59,6 +60,8 @@ def normalizar(dados) -> dict:
 
     if dados.get('so_retirada') is True:
         limpo['so_retirada'] = True
+    if dados.get('so_hoje') is True:
+        limpo['so_hoje'] = True
 
     minimo, maximo = dados.get('minimo'), dados.get('maximo')
     for nome, v in (('mínima', minimo), ('máxima', maximo)):
@@ -116,9 +119,28 @@ def quando_vende(regras: dict | None) -> str:
     return ', '.join(partes)
 
 
-def erros_do_carrinho(itens: Iterable[tuple], metodo: str, agora: datetime) -> list[str]:
-    """`itens` = (produto, quantidade). Uma frase por problema, para o cliente."""
+def _como_data(valor):
+    if not valor:
+        return None
+    if isinstance(valor, datetime):
+        return valor.date()
+    if hasattr(valor, 'year'):
+        return valor
+    try:
+        return datetime.fromisoformat(str(valor)[:10]).date()
+    except ValueError:
+        return None
+
+
+def erros_do_carrinho(itens: Iterable[tuple], metodo: str, agora: datetime, data_do_pedido=None) -> list[str]:
+    """`itens` = (produto, quantidade). Uma frase por problema, para o cliente.
+
+    `data_do_pedido` = data agendada (ou None = hoje). Sobra do dia em promoção
+    não pode ir para amanhã com o preço de hoje (Cê, 26/11).
+    """
     erros: list[str] = []
+    data = _como_data(data_do_pedido)
+    para_outro_dia = data is not None and data != agora.date()
     for produto, quantidade in itens:
         regras = getattr(produto, 'regras_de_venda', None) or {}
         if not regras:
@@ -126,6 +148,8 @@ def erros_do_carrinho(itens: Iterable[tuple], metodo: str, agora: datetime) -> l
         nome = produto.name
         if not vende_agora(regras, agora):
             erros.append(f'{nome} só é vendido {quando_vende(regras)}.')
+        if regras.get('so_hoje') and para_outro_dia:
+            erros.append(f'{nome} vale só para pedidos de hoje — tire o agendamento ou o item.')
         if regras.get('so_retirada') and metodo == 'delivery':
             erros.append(f'{nome} é só para retirada na loja.')
         if regras.get('minimo') and quantidade < regras['minimo']:

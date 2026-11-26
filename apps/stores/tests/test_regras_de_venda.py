@@ -152,3 +152,51 @@ def test_item_do_carrinho_leva_as_regras(loja):
     cart = StoreCart.objects.create(store=loja, session_key='c-serial')
     item = StoreCartItem.objects.create(cart=cart, product=p, quantity=1)
     assert StoreCartItemSerializer(item).data['regras_de_venda'] == {'so_retirada': True}
+
+
+class TestSoParaHoje:
+    """Sobra do dia em promoção: quem agendava para amanhã levava o preço de
+    hoje (Cê, 26/11 — 4 saladas). `so_hoje` recusa pedido para outro dia."""
+
+    def test_normalizar_guarda_so_hoje(self):
+        assert normalizar({'so_hoje': True}) == {'so_hoje': True}
+        assert normalizar({'so_hoje': False}) == {}
+
+    def test_erros_do_carrinho_recusa_outra_data(self):
+        from datetime import date
+
+        class P:
+            name = 'Salada do dia'
+            regras_de_venda = {'so_hoje': True}
+        agora = datetime(2026, 11, 26, 15)
+        assert erros_do_carrinho([(P(), 1)], 'pickup', agora, data_do_pedido=date(2026, 11, 27)) == [
+            'Salada do dia vale só para pedidos de hoje — tire o agendamento ou o item.',
+        ]
+        assert erros_do_carrinho([(P(), 1)], 'pickup', agora, data_do_pedido=date(2026, 11, 26)) == []
+        assert erros_do_carrinho([(P(), 1)], 'pickup', agora) == []
+        assert erros_do_carrinho([(P(), 1)], 'pickup', agora, data_do_pedido='2026-11-27') != []
+
+    def test_checkout_agendado_para_amanha_recusa(self, loja):
+        p = _produto(loja, 'Sobra', {'so_hoje': True})
+        cart = StoreCart.objects.create(store=loja, session_key='c-sobra')
+        StoreCartItem.objects.create(cart=cart, product=p, quantity=1)
+        with patch.object(timezone, 'localtime', return_value=_quando('2026-10-23T12:00')):
+            with pytest.raises(ValueError, match='só para pedidos de hoje'):
+                CheckoutService.create_order(
+                    cart=cart,
+                    customer_data={'name': 'Cliente', 'email': 'c@example.com', 'phone': '+5563999990001'},
+                    delivery_data={'method': 'pickup'},
+                    scheduled_date='2026-10-24', scheduled_time='12:00',
+                )
+
+    def test_checkout_para_hoje_passa(self, loja):
+        p = _produto(loja, 'Sobra2', {'so_hoje': True})
+        cart = StoreCart.objects.create(store=loja, session_key='c-sobra2')
+        StoreCartItem.objects.create(cart=cart, product=p, quantity=1)
+        with patch.object(timezone, 'localtime', return_value=_quando('2026-10-23T12:00')):
+            pedido = CheckoutService.create_order(
+                cart=cart,
+                customer_data={'name': 'Cliente', 'email': 'c@example.com', 'phone': '+5563999990001'},
+                delivery_data={'method': 'pickup'},
+            )
+        assert pedido.store_id == loja.id
