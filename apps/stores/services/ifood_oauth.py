@@ -180,6 +180,22 @@ _MERCHANT_NO_CAMINHO = re.compile(r'/merchants/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]
 LOJAS_DE_TESTE_TTL_S = 600
 
 
+def merchants_autorizados(app: str = 'pedidos'):
+    """Lojas que o app tem autorizadas (merchant_scope do token), em minúsculas.
+    None quando não dá para saber — quem chama não filtra."""
+    import base64
+    import json
+    try:
+        corpo = token(app).split('.')[1]
+        dados = json.loads(base64.urlsafe_b64decode(corpo + '=' * (-len(corpo) % 4)))
+    except Exception:  # noqa: BLE001 — sem token legível, sem filtro
+        return None
+    escopo = dados.get('merchant_scope') if isinstance(dados, dict) else None
+    if not isinstance(escopo, list):
+        return None
+    return {str(m).split(':')[0].lower() for m in escopo if m}
+
+
 def em_homologacao() -> bool:
     return bool(getattr(settings, 'IFOOD_HOMOLOGACAO_CLIENT_ID', '')
                 and getattr(settings, 'IFOOD_HOMOLOGACAO_CLIENT_SECRET', ''))

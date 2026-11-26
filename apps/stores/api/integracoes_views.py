@@ -23,6 +23,7 @@ from rest_framework.views import APIView
 from ..models import StoreOrder, StorePaymentGateway
 from ..models.ifood import StoreIfoodIntegration
 from ..services import ifood_oauth
+from ..services import ifood_oauth
 from ..services.pedidos_da_99 import PROVEDOR as FONTE_99
 from .repasse_99_views import _loja
 
@@ -214,6 +215,12 @@ class IfoodMerchantsDoWidgetView(APIView):
             .filter(store_id__in=accessible_store_ids(request.user), conectado=True)
             .exclude(merchant_id='')
             .order_by('created_at')
-            .values_list('merchant_id', flat=True)[:10]
+            .values_list('merchant_id', flat=True)
         )
-        return Response({'merchant_ids': ids})
+        # Loja que o app de verdade não tem autorizada (ex.: a de TESTE da
+        # homologação) derruba o widget inteiro: "Usuário não tem acesso em
+        # alguns dos restaurantes inclusos no widget" (26/11).
+        autorizadas = ifood_oauth.merchants_autorizados('pedidos')
+        if autorizadas is not None:
+            ids = [i for i in ids if str(i).lower() in autorizadas]
+        return Response({'merchant_ids': ids[:10]})
