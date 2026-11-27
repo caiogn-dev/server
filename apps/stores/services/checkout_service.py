@@ -776,6 +776,8 @@ class CheckoutService:
                 'product_id': str(item.product_id) if item.product_id else '',
                 'category_id': str(product.category_id) if product and product.category_id else '',
                 'total': Decimal(str(item.unit_price)) * int(item.quantity or 0),
+                # Item já em oferta não ganha cupom nem desconto de retirada (26/11).
+                'em_oferta': bool(product and product.preco_de_referencia() is not None),
             })
         return items
 
@@ -1130,12 +1132,14 @@ class CheckoutService:
         # Validate and apply coupon using unified StoreCoupon model
         discount = Decimal('0')
         coupon = None
+        itens_do_cupom = CheckoutService._coupon_items(cart)
+        total_em_oferta = sum((i['total'] for i in itens_do_cupom if i['em_oferta']), Decimal('0'))
         if coupon_code:
             coupon_result = CheckoutService.validate_coupon(
                 store, coupon_code, subtotal,
                 user=cart.user,
                 customer_phone=(customer_data.get('phone') or '').strip() or None,
-                items=CheckoutService._coupon_items(cart),
+                items=itens_do_cupom,
             )
             if coupon_result['valid']:
                 # RESERVA a vaga antes de conceder o desconto. `validate_coupon`
@@ -1218,9 +1222,11 @@ class CheckoutService:
         # desconto — o mesmo buraco do unit_price corrigido em 3f550c6.
         # Desconto de retirada (promoção da loja): sobre o subtotal já com
         # cupom e fidelidade, ANTES do cashback — o cardápio soma na mesma ordem.
+        # Item já em oferta fica fora da base (26/11: sobra a R$ 20 "de 39,99"
+        # levou cupom + 20% por cima).
         from apps.stores.services.desconto_retirada import desconto_da_retirada
         desconto_retirada = desconto_da_retirada(
-            store, subtotal - discount, (delivery_payload or {}).get('method') or '',
+            store, subtotal - total_em_oferta - discount, (delivery_payload or {}).get('method') or '',
         )
         discount += desconto_retirada
 

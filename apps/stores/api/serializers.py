@@ -2057,11 +2057,14 @@ class StoreCartItemSerializer(serializers.ModelSerializer):
     subtotal = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     # O checkout lê "só retirada" daqui para já marcar retirada.
     regras_de_venda = serializers.JSONField(source='product.regras_de_venda', read_only=True)
+    # Item já em oferta fica fora do cupom e do desconto de retirada — o
+    # cardápio usa isto para somar igual ao checkout.
+    em_oferta = serializers.SerializerMethodField()
     
     class Meta:
         model = StoreCartItem
         fields = [
-            'id', 'product', 'product_name', 'product_image', 'regras_de_venda',
+            'id', 'product', 'product_name', 'product_image', 'regras_de_venda', 'em_oferta',
             'variant', 'variant_name',
             'quantity', 'unit_price', 'subtotal',
             'options', 'notes',
@@ -2071,6 +2074,9 @@ class StoreCartItemSerializer(serializers.ModelSerializer):
     
     def get_product_image(self, obj):
         return obj.product.get_main_image_url()
+
+    def get_em_oferta(self, obj):
+        return bool(obj.product and obj.product.preco_de_referencia() is not None)
 
 
 class StoreCartComboItemSerializer(serializers.ModelSerializer):

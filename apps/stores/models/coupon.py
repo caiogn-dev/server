@@ -145,12 +145,17 @@ class StoreCoupon(models.Model):
         """
         product_ids = {str(p) for p in (self.applicable_products or [])}
         category_ids = {str(c) for c in (self.applicable_categories or [])}
-        if not product_ids and not category_ids:
-            return subtotal
         if items is None:
             return subtotal
+        # Item já em oferta não ganha cupom por cima (26/11).
+        if not product_ids and not category_ids:
+            em_oferta = sum((Decimal(str(i.get('total') or 0)) for i in items if i.get('em_oferta')),
+                            Decimal('0'))
+            return max(subtotal - em_oferta, Decimal('0'))
         eligible = Decimal('0')
         for item in items:
+            if item.get('em_oferta'):
+                continue
             pid = str(item.get('product_id') or '')
             cid = str(item.get('category_id') or '')
             if (pid and pid in product_ids) or (cid and cid in category_ids):
