@@ -9,6 +9,8 @@ por loja, o campo pode migrar pro gateway).
 - OrderByTokenView inclui pix_recipient_name no bloco PIX.
 - CheckoutService.create_payment (pix) inclui pix_recipient_name no retorno.
 - Sem env configurada → string vazia (frontend esconde o aviso).
+- Loja com gateway PRÓPRIO (ex.: Ivoneth → conta EMPRESA SAUDAVEL) não mostra
+  o nome do titular da plataforma: o PIX não cai na conta dele (27/11).
 """
 from decimal import Decimal
 from unittest.mock import patch, MagicMock
@@ -50,6 +52,7 @@ class PixRecipientNameTests(APITestCase):
         )
         self.store = Store.objects.create(
             name='Loja PRN', slug='loja-prn', owner=self.owner, status='active',
+            usa_gateway_da_plataforma=True,
         )
 
     def _pix_order(self):
@@ -60,7 +63,8 @@ class PixRecipientNameTests(APITestCase):
             payment_method='pix', pix_code='PIXCODE', pix_qr_code='B64',
         )
 
-    @override_settings(MERCADO_PAGO_RECIPIENT_NAME='Caio Goncalves Nascimento')
+    @override_settings(MERCADO_PAGO_RECIPIENT_NAME='Caio Goncalves Nascimento',
+                       MERCADO_PAGO_ACCESS_TOKEN='PLAT')
     def test_by_token_includes_recipient_name_for_pix(self):
         order = self._pix_order()
         resp = self.client.get(f'/api/v1/stores/orders/by-token/{order.access_token}/')
@@ -85,7 +89,7 @@ class PixRecipientNameTests(APITestCase):
 
     @override_settings(MERCADO_PAGO_RECIPIENT_NAME='Caio Goncalves Nascimento')
     @patch('apps.stores.services.checkout_service.CheckoutService.get_payment_credentials',
-           return_value={'access_token': 'TOKEN', 'provider': 'mercadopago'})
+           return_value={'access_token': 'TOKEN', 'provider': 'mercadopago', 'da_plataforma': True})
     @patch('apps.stores.services.mp_orders.create_order')
     def test_create_payment_pix_returns_recipient_name(self, mock_sdk, _creds):
         from apps.stores.services.checkout_service import CheckoutService
@@ -98,3 +102,37 @@ class PixRecipientNameTests(APITestCase):
         result = CheckoutService.create_payment(order, 'pix')
         self.assertTrue(result['success'], result)
         self.assertEqual(result['pix_recipient_name'], 'Caio Goncalves Nascimento')
+
+    def _gateway_proprio(self):
+        from apps.stores.models import StorePaymentGateway
+        self.store.usa_gateway_da_plataforma = False
+        self.store.save(update_fields=['usa_gateway_da_plataforma'])
+        StorePaymentGateway.objects.create(
+            store=self.store, name='MP da loja',
+            gateway_type=StorePaymentGateway.GatewayType.MERCADOPAGO,
+            is_enabled=True, access_token='TOKEN-DA-LOJA',
+        )
+
+    @override_settings(MERCADO_PAGO_RECIPIENT_NAME='CAIO G NASCIMENTO',
+                       MERCADO_PAGO_ACCESS_TOKEN='PLAT')
+    def test_by_token_sem_nome_da_plataforma_quando_loja_tem_gateway_proprio(self):
+        self._gateway_proprio()
+        order = self._pix_order()
+        resp = self.client.get(f'/api/v1/stores/orders/by-token/{order.access_token}/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['pix_recipient_name'], '')
+
+    @override_settings(MERCADO_PAGO_RECIPIENT_NAME='CAIO G NASCIMENTO')
+    @patch('apps.stores.services.mp_orders.create_order')
+    def test_create_payment_sem_nome_da_plataforma_quando_loja_tem_gateway_proprio(self, mock_sdk):
+        from apps.stores.services.checkout_service import CheckoutService
+        self._gateway_proprio()
+        mock_sdk.return_value = _orders_pix('MPRN2')
+        order = StoreOrder.objects.create(
+            store=self.store, customer_name='Cliente', customer_phone='5599999999999',
+            customer_email='cli@real.com',
+            subtotal=Decimal('50.00'), total=Decimal('50.00'),
+        )
+        result = CheckoutService.create_payment(order, 'pix')
+        self.assertTrue(result['success'], result)
+        self.assertEqual(result['pix_recipient_name'], '')

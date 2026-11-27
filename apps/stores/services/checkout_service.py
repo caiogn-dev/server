@@ -1506,6 +1506,15 @@ class CheckoutService:
         return order
     
     @staticmethod
+    def nome_do_recebedor_pix(credentials) -> str:
+        """Titular que o banco do cliente mostra no PIX — só quando o dinheiro
+        cai na conta da PLATAFORMA. Loja com gateway próprio (ex.: Ivoneth →
+        EMPRESA SAUDAVEL) não pode exibir o nome do dono da plataforma."""
+        if not (credentials or {}).get('da_plataforma'):
+            return ''
+        return getattr(settings, 'MERCADO_PAGO_RECIPIENT_NAME', '') or ''
+
+    @staticmethod
     def get_payment_credentials(store: Store) -> dict:
         """Get payment credentials for a store.
 
@@ -1561,6 +1570,7 @@ class CheckoutService:
                 'provider': 'mercadopago',
                 'access_token': access_token,
                 'sandbox': getattr(settings, 'MERCADO_PAGO_SANDBOX', False),
+                'da_plataforma': True,
             }
 
         if access_token:
@@ -2000,7 +2010,7 @@ class CheckoutService:
                     'ticket_url': existing.ticket_url,
                     'amount': str(existing.amount),
                     'payment_db_id': str(existing.id),
-                    'pix_recipient_name': getattr(settings, 'MERCADO_PAGO_RECIPIENT_NAME', ''),
+                    'pix_recipient_name': CheckoutService.nome_do_recebedor_pix(credentials),
                     'requires_redirect': False,
                     'reused': True,
                 }
@@ -2138,7 +2148,7 @@ class CheckoutService:
                     'ticket_url': store_payment.ticket_url,
                     'amount': str(amount),
                     'payment_db_id': str(store_payment.id),
-                    'pix_recipient_name': getattr(settings, 'MERCADO_PAGO_RECIPIENT_NAME', ''),
+                    'pix_recipient_name': CheckoutService.nome_do_recebedor_pix(credentials),
                     'expiration': pix_data.get("expiration_date"),
                     'requires_redirect': False,
                 }

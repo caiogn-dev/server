@@ -669,7 +669,12 @@ class OrderByTokenView(APIView):
                 response_data['pix_expires_at'] = order.pix_expires_at.isoformat() if order.pix_expires_at else None
                 # Titular da conta coletora — o banco do pagador exibe esse nome
                 # (DICT), não o nome da loja; o storefront avisa o cliente.
-                response_data['pix_recipient_name'] = getattr(settings, 'MERCADO_PAGO_RECIPIENT_NAME', '')
+                # Só quando o PIX cai na conta da plataforma; loja com gateway
+                # próprio não mostra o nome do dono da plataforma.
+                from apps.stores.services.checkout_service import CheckoutService
+                response_data['pix_recipient_name'] = CheckoutService.nome_do_recebedor_pix(
+                    CheckoutService.get_payment_credentials(order.store)
+                )
             
             return Response(response_data)
         
